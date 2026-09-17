@@ -67,13 +67,13 @@ map. Zero dependencies, no build step — one HTML file and one Node script.
 
 ```bash
 cd warmer
-printf 'GOOGLE_PLACES_API_KEY=...\nANTHROPIC_API_KEY=...\n' > .env   # gitignored
-node --env-file=.env server.mjs        # → http://localhost:3000  (Node 20+)
-
-# If your shell already exports ANTHROPIC_API_KEY (e.g. for Claude Code), Node's
-# --env-file will NOT override it. Run without inheriting it instead:
-#   env -u ANTHROPIC_API_KEY node --env-file=.env server.mjs
+node server.mjs        # → http://localhost:3000  (Node 20+)
 ```
+
+The first run asks for your Google Places key and Anthropic key, one at a time, and
+saves them to `warmer/.env` (gitignored). After that it just starts. The server reads
+`.env` itself and prefers it over the shell, so a key exported for another tool can't
+leak in. Org-scoped Anthropic keys also need `ANTHROPIC_WORKSPACE_ID=wrkspc_…` in `.env`.
 
 Demo it in Chrome's device toolbar at 390×844. Denied/absent geolocation falls back to
 Rothschild Blvd, Tel Aviv. Keys stay on the server: the browser only ever talks to

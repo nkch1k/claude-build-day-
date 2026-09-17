@@ -1,69 +1,127 @@
 // Warmer — local server. Static index.html + two proxies that keep the API keys
-// server-side. Zero dependencies: node:http, node:fs, global fetch.
+// server-side. Zero dependencies: node:http, node:fs, node:readline, global fetch.
 //
-//   node --env-file=.env server.mjs   →   http://localhost:3000
+//   node server.mjs   →   http://localhost:3000
+//
+// Keys live in .env next to this file. On first run with no keys the server
+// asks for them and writes .env itself.
 
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOST = "127.0.0.1";
 const PORT = 3000;
+const ENV_PATH = path.join(HERE, ".env");
 
-const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
-// Only needed for organization-scoped keys, which the API rejects without a
-// workspace to bill. Workspace-scoped keys (the usual kind) leave this unset.
-const ANTHROPIC_WORKSPACE_ID = process.env.ANTHROPIC_WORKSPACE_ID || "";
+const REQUIRED_KEYS = ["GOOGLE_PLACES_API_KEY", "ANTHROPIC_API_KEY"];
+// Only needed for organization-scoped Anthropic keys, which the API rejects
+// without a workspace to bill. Workspace-scoped keys (the usual kind) skip it.
+const OPTIONAL_KEYS = ["ANTHROPIC_WORKSPACE_ID"];
 
-const missing = [
-  !PLACES_KEY && "GOOGLE_PLACES_API_KEY",
-  !ANTHROPIC_KEY && "ANTHROPIC_API_KEY",
-].filter(Boolean);
-if (missing.length) {
-  console.error(
-    `Missing ${missing.join(" and ")}.\n` +
-      `Put them in .env next to server.mjs and start with:\n` +
-      `  node --env-file=.env server.mjs`,
-  );
-  process.exit(1);
+function parseDotenv(text) {
+  const out = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 1) continue;
+    const name = line.slice(0, eq).trim().replace(/^export\s+/, "");
+    const value = line.slice(eq + 1).trim().replace(/^(["'])(.*)\1$/, "$2");
+    out[name] = value;
+  }
+  return out;
 }
 
-// --env-file never overrides a variable the shell already exports, so a key
-// exported for another tool (Claude Code, say) silently wins over .env. Warn
-// when that has happened rather than let the upstream API report it.
-try {
-  const dotenv = fs.readFileSync(path.join(HERE, ".env"), "utf8");
-  for (const name of ["GOOGLE_PLACES_API_KEY", "ANTHROPIC_API_KEY"]) {
-    const line = dotenv.split(/\r?\n/).find((l) => l.trim().startsWith(name + "="));
-    if (!line) continue;
-    const fileValue = line.slice(line.indexOf("=") + 1).trim().replace(/^(["'])(.*)\1$/, "$2");
-    if (fileValue && fileValue !== process.env[name]) {
-      console.warn(
-        `Warning: ${name} is exported in your shell and differs from .env — the shell value is being used.\n` +
-          `  To use .env instead:  env -u ${name} node --env-file=.env server.mjs\n` +
-          `  or on Node 24+:       node --env-file-override=.env server.mjs`,
-      );
+// A real key is printable ASCII. Anything else ("AIzaSyBM••••", "sk-ant-…")
+// was copied from a masked or truncated display.
+function badCharIn(value) {
+  return [...value].find((ch) => ch.charCodeAt(0) < 33 || ch.charCodeAt(0) > 126);
+}
+
+function loadKeys() {
+  let fromFile = {};
+  try {
+    fromFile = parseDotenv(fs.readFileSync(ENV_PATH, "utf8"));
+  } catch {
+    // no .env yet
+  }
+  // .env wins over the shell: a key exported for another tool (Claude Code,
+  // say) must not leak in here just because it shares the variable name.
+  const keys = {};
+  for (const name of [...REQUIRED_KEYS, ...OPTIONAL_KEYS]) {
+    keys[name] = fromFile[name] || process.env[name] || "";
+  }
+  return keys;
+}
+
+async function promptForMissingKeys(keys) {
+  const missing = REQUIRED_KEYS.filter((name) => !keys[name]);
+  if (!missing.length) return keys;
+
+  if (!process.stdin.isTTY) {
+    console.error(
+      `Missing ${missing.join(" and ")}.\n` +
+        `Run \`node server.mjs\` in a terminal and it will ask for them, or put them in ${ENV_PATH}`,
+    );
+    process.exit(1);
+  }
+
+  console.log("Warmer needs two API keys. Paste each one and press Enter; they are saved to .env (gitignored).\n");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  // Ctrl+C / Ctrl+D at the prompt: leave quietly instead of dumping a stack trace.
+  rl.on("SIGINT", () => { console.log("\nCancelled — nothing saved."); process.exit(1); });
+  const ask = async (q) => {
+    try {
+      return await rl.question(q);
+    } catch (error) {
+      if (error?.code === "ABORT_ERR") { console.log("\nCancelled — nothing saved."); process.exit(1); }
+      throw error;
+    }
+  };
+  for (const name of missing) {
+    const hint = name === "GOOGLE_PLACES_API_KEY"
+      ? "Google Cloud Console → APIs & Services → Credentials (starts with AIza)"
+      : "console.anthropic.com → Settings → API keys (starts with sk-ant-)";
+    for (;;) {
+      const value = (await ask(`${name}  [${hint}]\n> `)).trim();
+      if (!value) continue;
+      const bad = badCharIn(value);
+      if (bad) {
+        console.log(`  That contains "${bad}", which can't be part of a key — it was probably copied from a masked field. Paste the full key.\n`);
+        continue;
+      }
+      keys[name] = value;
+      break;
     }
   }
-} catch {
-  // no .env next to server.mjs — keys came from the environment, nothing to compare
+  rl.close();
+
+  const lines = [...REQUIRED_KEYS, ...OPTIONAL_KEYS].filter((n) => keys[n]).map((n) => `${n}=${keys[n]}`);
+  fs.writeFileSync(ENV_PATH, lines.join("\n") + "\n", { mode: 0o600 });
+  console.log(`\nSaved to ${ENV_PATH}\n`);
+  return keys;
 }
 
-// Keys pasted from a masked display arrive as "AIzaSyBM••••" and only fail
-// later, deep inside fetch. Catch that here with a message that names the key.
-for (const [name, value] of [["GOOGLE_PLACES_API_KEY", PLACES_KEY], ["ANTHROPIC_API_KEY", ANTHROPIC_KEY]]) {
-  const bad = [...value].find((ch) => ch.charCodeAt(0) < 33 || ch.charCodeAt(0) > 126);
+const KEYS = await promptForMissingKeys(loadKeys());
+
+for (const name of REQUIRED_KEYS) {
+  const bad = badCharIn(KEYS[name]);
   if (bad) {
     console.error(
       `${name} contains "${bad}" (U+${bad.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}), which cannot be part of an API key.\n` +
-        `It was probably copied from a masked field. Paste the full key into .env and restart.`,
+        `It was probably copied from a masked field. Delete that line from ${ENV_PATH} and run \`node server.mjs\` again to re-enter it.`,
     );
     process.exit(1);
   }
 }
+
+const PLACES_KEY = KEYS.GOOGLE_PLACES_API_KEY;
+const ANTHROPIC_KEY = KEYS.ANTHROPIC_API_KEY;
+const ANTHROPIC_WORKSPACE_ID = KEYS.ANTHROPIC_WORKSPACE_ID;
 
 // ---------------------------------------------------------------------------
 // HTTP plumbing
