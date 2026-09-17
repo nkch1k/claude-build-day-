@@ -58,6 +58,32 @@ function loadKeys() {
   return keys;
 }
 
+// One interactive prompt session. Ctrl+C / Ctrl+D leave quietly instead of
+// dumping a stack trace.
+async function promptSession(run) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const bail = () => { console.log("\nCancelled — nothing saved."); process.exit(1); };
+  rl.on("SIGINT", bail);
+  const ask = async (q) => {
+    try {
+      return await rl.question(q);
+    } catch (error) {
+      if (error?.code === "ABORT_ERR") bail();
+      throw error;
+    }
+  };
+  try {
+    return await run(ask);
+  } finally {
+    rl.close();
+  }
+}
+
+function saveEnv(keys) {
+  const lines = [...REQUIRED_KEYS, ...OPTIONAL_KEYS].filter((n) => keys[n]).map((n) => `${n}=${keys[n]}`);
+  fs.writeFileSync(ENV_PATH, lines.join("\n") + "\n", { mode: 0o600 });
+}
+
 async function promptForMissingKeys(keys) {
   const missing = REQUIRED_KEYS.filter((name) => !keys[name]);
   if (!missing.length) return keys;
@@ -71,37 +97,26 @@ async function promptForMissingKeys(keys) {
   }
 
   console.log("Warmer needs two API keys. Paste each one and press Enter; they are saved to .env (gitignored).\n");
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  // Ctrl+C / Ctrl+D at the prompt: leave quietly instead of dumping a stack trace.
-  rl.on("SIGINT", () => { console.log("\nCancelled — nothing saved."); process.exit(1); });
-  const ask = async (q) => {
-    try {
-      return await rl.question(q);
-    } catch (error) {
-      if (error?.code === "ABORT_ERR") { console.log("\nCancelled — nothing saved."); process.exit(1); }
-      throw error;
-    }
-  };
-  for (const name of missing) {
-    const hint = name === "GOOGLE_PLACES_API_KEY"
-      ? "Google Cloud Console → APIs & Services → Credentials (starts with AIza)"
-      : "console.anthropic.com → Settings → API keys (starts with sk-ant-)";
-    for (;;) {
-      const value = (await ask(`${name}  [${hint}]\n> `)).trim();
-      if (!value) continue;
-      const bad = badCharIn(value);
-      if (bad) {
-        console.log(`  That contains "${bad}", which can't be part of a key — it was probably copied from a masked field. Paste the full key.\n`);
-        continue;
+  await promptSession(async (ask) => {
+    for (const name of missing) {
+      const hint = name === "GOOGLE_PLACES_API_KEY"
+        ? "Google Cloud Console → APIs & Services → Credentials (starts with AIza)"
+        : "console.anthropic.com → Settings → API keys (starts with sk-ant-)";
+      for (;;) {
+        const value = (await ask(`${name}  [${hint}]\n> `)).trim();
+        if (!value) continue;
+        const bad = badCharIn(value);
+        if (bad) {
+          console.log(`  That contains "${bad}", which can't be part of a key — it was probably copied from a masked field. Paste the full key.\n`);
+          continue;
+        }
+        keys[name] = value;
+        break;
       }
-      keys[name] = value;
-      break;
     }
-  }
-  rl.close();
+  });
 
-  const lines = [...REQUIRED_KEYS, ...OPTIONAL_KEYS].filter((n) => keys[n]).map((n) => `${n}=${keys[n]}`);
-  fs.writeFileSync(ENV_PATH, lines.join("\n") + "\n", { mode: 0o600 });
+  saveEnv(keys);
   console.log(`\nSaved to ${ENV_PATH}\n`);
   return keys;
 }
@@ -478,11 +493,8 @@ async function discoverWorkspaceId() {
   if (!live.length) throw new Error("Workspaces: none found for this key");
   const picked = live[0];
   console.log(`[foodie] key is organization-scoped; billing workspace "${picked.name || picked.id}" (${picked.id})`);
-  try {
-    fs.appendFileSync(ENV_PATH, `ANTHROPIC_WORKSPACE_ID=${picked.id}\n`);
-  } catch {
-    // .env not writable — fine, it stays in memory for this run
-  }
+  KEYS.ANTHROPIC_WORKSPACE_ID = picked.id;
+  try { saveEnv(KEYS); } catch { /* .env not writable — it stays in memory for this run */ }
   return picked.id;
 }
 
@@ -586,6 +598,63 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) fail(res, status, error?.message || "Server error");
   }
 });
+
+const COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens";
+
+// Organization-level keys must name a workspace to bill. Find that out now,
+// with a free count_tokens call, and ask for the ID once instead of failing
+// on the first Foodie request.
+async function ensureWorkspaceId() {
+  if (ANTHROPIC_WORKSPACE_ID) return;
+  let response;
+  try {
+    response = await fetch(COUNT_TOKENS_URL, {
+      method: "POST",
+      headers: { "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: FOODIE_MODEL, messages: [{ role: "user", content: "hi" }] }),
+    });
+  } catch {
+    return; // offline right now — the real request will report it
+  }
+  if (response.ok) return;
+  const err = await upstreamError(response, "Claude");
+  if (!/not scoped to a workspace/i.test(err.message)) {
+    console.warn(`Warning: ${err.message}`);
+    return;
+  }
+
+  console.log("\nThis Anthropic key is organization-level, so requests must name a workspace to bill.");
+  try {
+    ANTHROPIC_WORKSPACE_ID = await discoverWorkspaceId();
+    return;
+  } catch {
+    // the key cannot list workspaces — ask instead
+  }
+  if (!process.stdin.isTTY) {
+    console.error(`Add ANTHROPIC_WORKSPACE_ID=wrkspc_… to ${ENV_PATH} (console.anthropic.com → Settings → Workspaces → open one → copy its ID), or use a workspace-scoped key.`);
+    process.exit(1);
+  }
+  await promptSession(async (ask) => {
+    for (;;) {
+      const value = (await ask(
+        "Open https://console.anthropic.com/settings/workspaces, click a workspace, and paste its ID\n" +
+        "(starts with wrkspc_ — pasting the whole page URL is fine)\n> ",
+      )).trim();
+      const match = value.match(/wrkspc_[A-Za-z0-9_-]+/);
+      if (!match) {
+        console.log("  No wrkspc_… ID in that. Try again.\n");
+        continue;
+      }
+      ANTHROPIC_WORKSPACE_ID = match[0];
+      break;
+    }
+  });
+  KEYS.ANTHROPIC_WORKSPACE_ID = ANTHROPIC_WORKSPACE_ID;
+  saveEnv(KEYS);
+  console.log(`Saved workspace ${ANTHROPIC_WORKSPACE_ID} to ${ENV_PATH}\n`);
+}
+
+await ensureWorkspaceId();
 
 server.listen(PORT, HOST, () => {
   console.log(`Warmer → http://localhost:${PORT}`);
