@@ -17,10 +17,10 @@
     --ink: #141413;
     --ink-2: #5E5A54;
     --muted: #A39E95;
-    --hot: #C15F3C;     /* perfect — deep terracotta */
-    --warm: #D97757;    /* good — Claude terracotta */
-    --kraft: #D4A27F;
-    --cold: #5B7C99;    /* coldspot */
+    --hot: #E0562A;     /* perfect — bright terracotta */
+    --warm: #F28C5A;    /* good — warm orange */
+    --kraft: #F2B07A;
+    --cold: #6B8FB0;    /* coldspot — lighter slate */
     --line: rgba(20, 20, 19, 0.10);
     --shadow: 0 10px 30px rgba(20, 20, 19, 0.16), 0 2px 6px rgba(20, 20, 19, 0.08);
     --bar-h: 62px;
@@ -179,7 +179,7 @@
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     padding: 5px 10px; border-radius: 999px; color: var(--paper);
   }
-  .tier[data-tier="perfect"] { background: var(--hot); }
+  .tier[data-tier="perfect"] { background: #C9441A; }
   .tier[data-tier="good"] { background: var(--warm); }
   .tier[data-tier="average"] { background: var(--muted); }
   .tier[data-tier="cold"] { background: var(--cold); }
@@ -205,12 +205,24 @@
     display: flex; align-items: center; justify-content: center; gap: 10px;
     width: 100%; height: 54px; border-radius: 16px; text-decoration: none;
     background: var(--hot); color: var(--paper); font-size: 16px; font-weight: 700; letter-spacing: 0.04em;
-    box-shadow: 0 6px 18px rgba(193, 95, 60, 0.32);
+    box-shadow: 0 6px 18px rgba(224, 86, 42, 0.34);
   }
   .go:active { transform: translateY(1px); }
   .go .num { font-size: 13px; opacity: 0.9; font-weight: 500; }
 
   .foodie h2 { margin: 10px 0 2px; font-size: 22px; letter-spacing: -0.02em; }
+  .foodie-title { display: flex; align-items: center; gap: 10px; }
+  .foodie-title .foodie-logo { animation: wiggle 3.2s ease-in-out infinite; transform-origin: 50% 90%; }
+  .pill.secondary { gap: 8px; padding-left: 14px; border-color: rgba(224, 86, 42, 0.35); }
+  .pill.secondary .foodie-logo { animation: wiggle 4s ease-in-out infinite; transform-origin: 50% 90%; }
+  .pill.secondary:active .foodie-logo { animation: none; transform: rotate(12deg) scale(1.15); }
+  @keyframes wiggle {
+    0%, 70%, 100% { transform: rotate(0); }
+    76% { transform: rotate(-9deg) scale(1.06); }
+    82% { transform: rotate(8deg) scale(1.06); }
+    88% { transform: rotate(-5deg); }
+    94% { transform: rotate(3deg); }
+  }
   .foodie .lede { margin: 0 0 14px; font-size: 13px; color: var(--ink-2); }
   .quick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
   .quick button {
@@ -281,14 +293,14 @@
 </header>
 
 <aside class="legend glass" aria-label="Legend">
-  <div><span class="dot" style="background:#C15F3C"></span>Perfect</div>
-  <div><span class="dot" style="background:#D97757"></span>Good</div>
-  <div><span class="dot" style="background:#A39E95"></span>Average</div>
-  <div><span class="dot" style="background:#5B7C99"></span>Coldspot</div>
+  <div><span class="dot" style="background:#C9441A"></span>Perfect</div>
+  <div><span class="dot" style="background:#F28C5A"></span>Good</div>
+  <div><span class="dot" style="background:#B5AFA5"></span>Average</div>
+  <div><span class="dot" style="background:#6B8FB0"></span>Coldspot</div>
 </aside>
 
 <div class="pills">
-  <button class="pill secondary" id="foodieBtn" type="button">Foodie</button>
+  <button class="pill secondary" id="foodieBtn" type="button"><svg class="foodie-logo" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true"><path d="M16 2.5c1.2 5.2 8.5 7.8 8.5 15a8.5 8.5 0 0 1-17 0c0-3.6 1.9-6 3.4-8.6.8 2.6 1.9 4 3.8 4.4-.6-3.2-.9-7 1.3-10.8z" fill="#E0562A"/><path d="M16 12.5c.9 3 4.6 4.3 4.6 8.2a4.6 4.6 0 0 1-9.2 0c0-2.4 1.5-3.7 2.3-5.4.5 1.4 1.2 2 2.3 2.2-.4-1.6-.7-3.2 0-5z" fill="#F2B07A"/><circle cx="13.6" cy="20.6" r="1.35" fill="#141413"/><circle cx="18.6" cy="20.6" r="1.35" fill="#141413"/><path d="M13.4 24q2.7 2.4 5.4 0" stroke="#141413" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>Foodie</button>
   <button class="pill primary" id="warmBtn" type="button"><span class="flame"></span>Warm me now</button>
 </div>
 
@@ -318,7 +330,7 @@
 <section class="sheet foodie" id="foodie" aria-label="Foodie">
   <div class="handle"></div>
   <div class="sheet-head">
-    <h2>Foodie</h2>
+    <h2 class="foodie-title"><svg class="foodie-logo" viewBox="0 0 32 32" width="34" height="34" aria-hidden="true"><path d="M16 2.5c1.2 5.2 8.5 7.8 8.5 15a8.5 8.5 0 0 1-17 0c0-3.6 1.9-6 3.4-8.6.8 2.6 1.9 4 3.8 4.4-.6-3.2-.9-7 1.3-10.8z" fill="#E0562A"/><path d="M16 12.5c.9 3 4.6 4.3 4.6 8.2a4.6 4.6 0 0 1-9.2 0c0-2.4 1.5-3.7 2.3-5.4.5 1.4 1.2 2 2.3 2.2-.4-1.6-.7-3.2 0-5z" fill="#F2B07A"/><circle cx="13.6" cy="20.6" r="1.35" fill="#141413"/><circle cx="18.6" cy="20.6" r="1.35" fill="#141413"/><path d="M13.4 24q2.7 2.4 5.4 0" stroke="#141413" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>Foodie</h2>
     <button class="close" id="fClose" type="button" aria-label="Close">×</button>
   </div>
   <p class="lede">Say what you're after. The field re-warms to match.</p>
@@ -343,7 +355,7 @@
   // Rothschild Blvd, Tel Aviv — used when geolocation fails or is denied.
   const FALLBACK = { lat: 32.0644, lng: 34.7722, label: "Rothschild Blvd, Tel Aviv" };
 
-  const COLORS = { perfect: "#C15F3C", good: "#D97757", average: "#A39E95", cold: "#5B7C99" };
+  const COLORS = { perfect: "#C9441A", good: "#F28C5A", average: "#B5AFA5", cold: "#6B8FB0" };
 
   // Weights over the five signals; each preset sums to 1.
   const PRESETS = {
@@ -354,8 +366,8 @@
   };
 
   const WALK_M_PER_MIN = 80;
-  const BASELINE_MIN = 20; // at or above this a place produces no heat at all
-  const BLOOM_MIN = 8;     // below this a place blooms hard regardless of tab
+  const BASELINE_MIN = 30; // at or above this a place produces no heat at all
+  const BLOOM_MIN = 12;    // below this a place blooms hard regardless of tab
   const SEARCH_RADIUS_M = 900;
   const REFETCH_M = 700;   // pan this far from the last fetch and we fetch again
   const MARKER_ZOOM = 16;
@@ -434,10 +446,10 @@
     c.width = 1; c.height = 256;
     const ctx = c.getContext("2d");
     const g = ctx.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0.00, "#5B7C99");
-    g.addColorStop(0.45, "#F5F0E8"); // the cream stop — blue straight to terracotta goes muddy
-    g.addColorStop(0.75, "#D4A27F");
-    g.addColorStop(1.00, "#C15F3C");
+    g.addColorStop(0.00, "#6B8FB0");
+    g.addColorStop(0.40, "#FBF3E4"); // the cream stop — blue straight to orange goes muddy
+    g.addColorStop(0.70, "#F2B07A");
+    g.addColorStop(1.00, "#EE6A3A");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, 1, 256);
     return ctx.getImageData(0, 0, 1, 256).data;
@@ -497,20 +509,20 @@
       bctx.clearRect(0, 0, W, H);
       bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const zoom = this._map.getZoom();
-      const baseRadius = Math.max(6, 13 * Math.pow(2, zoom - 14)); // px before the 60px cap; floor keeps the field visible zoomed out
+      const baseRadius = Math.max(8, 18 * Math.pow(2, zoom - 14)); // px before the 90px cap; floor keeps the field visible zoomed out
       const cw = W / dpr, ch = H / dpr;
 
       for (const it of this._items) {
         if (it.heat <= 0) continue;
         const p = this._map.latLngToContainerPoint([it.lat, it.lng]);
         const x = p.x + this._pad.x, y = p.y + this._pad.y;
-        const r = Math.min(60, baseRadius * (0.55 + 0.65 * it.heat) * it.bloom);
+        const r = Math.min(80, baseRadius * (0.6 + 0.7 * it.heat) * it.bloom);
         if (x < -r || y < -r || x > cw + r || y > ch + r) continue;
         const g = bctx.createRadialGradient(x, y, 0, x, y, r);
         g.addColorStop(0, "rgba(255,255,255,1)");
         g.addColorStop(0.45, "rgba(255,255,255,0.5)");
         g.addColorStop(1, "rgba(255,255,255,0)");
-        bctx.globalAlpha = Math.min(1, (0.28 + 0.62 * it.heat) * it.bloom);
+        bctx.globalAlpha = Math.min(1, (0.2 + 0.5 * it.heat) * it.bloom);
         bctx.fillStyle = g;
         bctx.beginPath();
         bctx.arc(x, y, r, 0, Math.PI * 2);
@@ -527,14 +539,14 @@
         if (a === 0) continue;
         const j = a * 4;
         d[i] = lut[j]; d[i + 1] = lut[j + 1]; d[i + 2] = lut[j + 2];
-        d[i + 3] = Math.round(255 * Math.pow(a / 255, 0.75));
+        d[i + 3] = Math.round(255 * Math.pow(a / 255, 0.72));
       }
       bctx.putImageData(img, 0, 0);
 
       // 1. cold wash under everything, then the field on top
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = "rgba(91,124,153,0.55)"; // #5B7C99
+      ctx.fillStyle = "rgba(107,143,176,0.42)"; // #6B8FB0 — lighter wash so streets show through
       ctx.fillRect(0, 0, W, H);
       ctx.drawImage(this._buf, 0, 0);
     },
@@ -612,12 +624,12 @@
     }
     heatValue = clamp01(heatValue);
 
-    const tier = heatValue <= 0 ? "cold" : heatValue >= 0.72 ? "perfect" : heatValue >= 0.5 ? "good" : "average";
+    const tier = heatValue <= 0 ? "cold" : heatValue >= 0.7 ? "perfect" : heatValue >= 0.46 ? "good" : "average";
 
     return {
       id: place.id, place, lat: place.lat, lng: place.lng,
       walkM, walkMin, prep, minutes, signals, heat: heatValue, tier, closed,
-      bloom: minutes < BLOOM_MIN && !closed ? 1.25 : 1,
+      bloom: minutes < BLOOM_MIN && !closed ? 1.3 : 1,
       cuisine: prettyType(place.primaryType),
       filtered: false,
     };
@@ -764,7 +776,7 @@
 
     const note = $("cColdNote");
     if (s.closed) { note.hidden = false; note.textContent = "Closed right now — no heat until it opens."; }
-    else if (s.minutes >= BASELINE_MIN) { note.hidden = false; note.textContent = `About ${Math.round(s.minutes)} minutes to food in hand (${Math.round(s.prep)} min prep + ${Math.round(s.walkMin)} min walk). Over the 20-minute line.`; }
+    else if (s.minutes >= BASELINE_MIN) { note.hidden = false; note.textContent = `About ${Math.round(s.minutes)} minutes to food in hand (${Math.round(s.prep)} min prep + ${Math.round(s.walkMin)} min walk). Over the ${BASELINE_MIN}-minute line.`; }
     else { note.hidden = true; note.textContent = ""; }
 
     $("cSummary").textContent = p.editorialSummary || "";
@@ -812,7 +824,7 @@
   function warmMeNow() {
     const best = state.scored.find((s) => !s.filtered && s.heat > 0);
     if (!best) {
-      toast(state.places.length ? "Nothing warm within 20 minutes right now." : "Still loading places…");
+      toast(state.places.length ? `Nothing warm within ${BASELINE_MIN} minutes right now.` : "Still loading places…");
       return;
     }
     openCard(best, true);

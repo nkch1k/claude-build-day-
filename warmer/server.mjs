@@ -419,7 +419,7 @@ function buildSystemPrompt(places) {
   return [
     "You are Foodie, the assistant inside Warmer, a map that shows good, fast food nearby as a heat field.",
     "The user is hungry and on foot. Minutes means total time until food is in their hand (prep + walk).",
-    "Tiers: perfect and good are warm; average is neutral; coldspot means 20+ minutes or closed and is shown in blue.",
+    "Tiers: perfect and good are warm; average is neutral; coldspot means 30+ minutes or closed and is shown in blue.",
     "",
     "Answer ONLY with a single JSON object, no markdown fences, no prose outside the JSON:",
     "{",
