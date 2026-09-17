@@ -28,6 +28,19 @@ if (missing.length) {
   process.exit(1);
 }
 
+// Keys pasted from a masked display arrive as "AIzaSyBM••••" and only fail
+// later, deep inside fetch. Catch that here with a message that names the key.
+for (const [name, value] of [["GOOGLE_PLACES_API_KEY", PLACES_KEY], ["ANTHROPIC_API_KEY", ANTHROPIC_KEY]]) {
+  const bad = [...value].find((ch) => ch.charCodeAt(0) < 33 || ch.charCodeAt(0) > 126);
+  if (bad) {
+    console.error(
+      `${name} contains "${bad}" (U+${bad.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}), which cannot be part of an API key.\n` +
+        `It was probably copied from a masked field. Paste the full key into .env and restart.`,
+    );
+    process.exit(1);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // HTTP plumbing
 // ---------------------------------------------------------------------------
