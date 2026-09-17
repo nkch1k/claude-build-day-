@@ -14,6 +14,9 @@ const PORT = 3000;
 
 const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+// Only needed for organization-scoped keys, which the API rejects without a
+// workspace to bill. Workspace-scoped keys (the usual kind) leave this unset.
+const ANTHROPIC_WORKSPACE_ID = process.env.ANTHROPIC_WORKSPACE_ID || "";
 
 const missing = [
   !PLACES_KEY && "GOOGLE_PLACES_API_KEY",
@@ -390,6 +393,7 @@ async function handleFoodie(req, res) {
       "x-api-key": ANTHROPIC_KEY,
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
+      ...(ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": ANTHROPIC_WORKSPACE_ID } : {}),
     },
     body: JSON.stringify({
       model: FOODIE_MODEL,
@@ -403,7 +407,7 @@ async function handleFoodie(req, res) {
   if (!response.ok) {
     const err = await upstreamError(response, "Claude");
     console.error(`[foodie] ${err.message}`);
-    return fail(res, 502, `Foodie is unavailable (${err.message.slice(0, 120)})`);
+    return fail(res, 502, `Foodie is unavailable (${err.message.slice(0, 240)})`);
   }
 
   const data = await response.json();
