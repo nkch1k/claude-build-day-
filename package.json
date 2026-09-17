@@ -1,0 +1,23 @@
+{
+  "name": "claude-build-day",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Starter for calling the Claude API with an Anthropic Console API key.",
+  "scripts": {
+    "check-auth": "tsx --env-file-if-exists=.env src/check-auth.ts",
+    "hello": "tsx --env-file-if-exists=.env src/examples/hello.ts",
+    "stream": "tsx --env-file-if-exists=.env src/examples/stream.ts",
+    "tools": "tsx --env-file-if-exists=.env src/examples/tools.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
