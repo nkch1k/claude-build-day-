@@ -31,6 +31,60 @@ if (missing.length) {
   process.exit(1);
 }
 
+// --env-file never overrides a variable the shell already exports, so a key
+// exported for another tool (Claude Code, say) silently wins over .env. Warn
+// when that has happened rather than let the upstream API report it.
+try {
+  const dotenv = fs.readFileSync(path.join(HERE, ".env"), "utf8");
+  for (const name of ["GOOGLE_PLACES_API_KEY", "ANTHROPIC_API_KEY"]) {
+    const match = dotenv.match(new RegExp(`^\\s*${name}\\s*=\\s*(.*?)\\s*// Warmer — local server. Static index.html + two proxies that keep the API keys
+// server-side. Zero dependencies: node:http, node:fs, global fetch.
+//
+//   node --env-file=.env server.mjs   →   http://localhost:3000
+
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const HOST = "127.0.0.1";
+const PORT = 3000;
+
+const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+// Only needed for organization-scoped keys, which the API rejects without a
+// workspace to bill. Workspace-scoped keys (the usual kind) leave this unset.
+const ANTHROPIC_WORKSPACE_ID = process.env.ANTHROPIC_WORKSPACE_ID || "";
+
+const missing = [
+  !PLACES_KEY && "GOOGLE_PLACES_API_KEY",
+  !ANTHROPIC_KEY && "ANTHROPIC_API_KEY",
+].filter(Boolean);
+if (missing.length) {
+  console.error(
+    `Missing ${missing.join(" and ")}.\n` +
+      `Put them in .env next to server.mjs and start with:\n` +
+      `  node --env-file=.env server.mjs`,
+  );
+  process.exit(1);
+}
+
+, "m"));
+    if (!match) continue;
+    const fileValue = match[1].replace(/^(["'])(.*)\1$/, "$2");
+    if (fileValue && fileValue !== process.env[name]) {
+      console.warn(
+        `Warning: ${name} is exported in your shell and differs from .env — the shell value is being used.\n` +
+          `  To use .env instead:  env -u ${name} node --env-file=.env server.mjs\n` +
+          `  or on Node 24+:       node --env-file-override=.env server.mjs`,
+      );
+    }
+  }
+} catch {
+  // no .env next to server.mjs — keys came from the environment, nothing to compare
+}
+
 // Keys pasted from a masked display arrive as "AIzaSyBM••••" and only fail
 // later, deep inside fetch. Catch that here with a message that names the key.
 for (const [name, value] of [["GOOGLE_PLACES_API_KEY", PLACES_KEY], ["ANTHROPIC_API_KEY", ANTHROPIC_KEY]]) {

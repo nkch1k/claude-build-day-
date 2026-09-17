@@ -69,6 +69,10 @@ map. Zero dependencies, no build step — one HTML file and one Node script.
 cd warmer
 printf 'GOOGLE_PLACES_API_KEY=...\nANTHROPIC_API_KEY=...\n' > .env   # gitignored
 node --env-file=.env server.mjs        # → http://localhost:3000  (Node 20+)
+
+# If your shell already exports ANTHROPIC_API_KEY (e.g. for Claude Code), Node's
+# --env-file will NOT override it. Run without inheriting it instead:
+#   env -u ANTHROPIC_API_KEY node --env-file=.env server.mjs
 ```
 
 Demo it in Chrome's device toolbar at 390×844. Denied/absent geolocation falls back to
