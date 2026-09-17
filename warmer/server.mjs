@@ -121,7 +121,11 @@ for (const name of REQUIRED_KEYS) {
 
 const PLACES_KEY = KEYS.GOOGLE_PLACES_API_KEY;
 const ANTHROPIC_KEY = KEYS.ANTHROPIC_API_KEY;
-const ANTHROPIC_WORKSPACE_ID = KEYS.ANTHROPIC_WORKSPACE_ID;
+let ANTHROPIC_WORKSPACE_ID = KEYS.ANTHROPIC_WORKSPACE_ID;
+
+const fingerprint = (k) => (k.length > 14 ? `${k.slice(0, 14)}…${k.slice(-4)}` : k);
+console.log(`Google key ${fingerprint(PLACES_KEY)} · Anthropic key ${fingerprint(ANTHROPIC_KEY)}` +
+  (ANTHROPIC_WORKSPACE_ID ? ` · workspace ${ANTHROPIC_WORKSPACE_ID}` : ""));
 
 // ---------------------------------------------------------------------------
 // HTTP plumbing
@@ -460,13 +464,30 @@ function normalizeFoodie(parsed) {
   return { cuisines, weights, reply };
 }
 
-async function handleFoodie(req, res) {
-  const body = await readJsonBody(req);
-  const text = cleanText(body.text);
-  if (!text) return fail(res, 400, "Body must be { text, places } with non-empty text.");
-  const places = trimPlacesForModel(body.places);
+const WORKSPACES_URL = "https://api.anthropic.com/v1/organizations/workspaces?limit=20";
 
-  const response = await fetch(ANTHROPIC_URL, {
+// An organization-scoped key can list the org's workspaces; use that to pick
+// one to bill instead of making the user go and find the ID.
+async function discoverWorkspaceId() {
+  const response = await fetch(WORKSPACES_URL, {
+    headers: { "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
+  });
+  if (!response.ok) throw await upstreamError(response, "Workspaces");
+  const data = await response.json();
+  const live = (Array.isArray(data.data) ? data.data : []).filter((w) => w?.id && !w.archived_at);
+  if (!live.length) throw new Error("Workspaces: none found for this key");
+  const picked = live[0];
+  console.log(`[foodie] key is organization-scoped; billing workspace "${picked.name || picked.id}" (${picked.id})`);
+  try {
+    fs.appendFileSync(ENV_PATH, `ANTHROPIC_WORKSPACE_ID=${picked.id}\n`);
+  } catch {
+    // .env not writable — fine, it stays in memory for this run
+  }
+  return picked.id;
+}
+
+function callClaude(payload) {
+  return fetch(ANTHROPIC_URL, {
     method: "POST",
     headers: {
       "x-api-key": ANTHROPIC_KEY,
@@ -474,14 +495,40 @@ async function handleFoodie(req, res) {
       "content-type": "application/json",
       ...(ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": ANTHROPIC_WORKSPACE_ID } : {}),
     },
-    body: JSON.stringify({
-      model: FOODIE_MODEL,
-      max_tokens: 400,
-      system: buildSystemPrompt(places),
-      // User text goes in its own turn — never templated into the system prompt.
-      messages: [{ role: "user", content: text }],
-    }),
+    body: JSON.stringify(payload),
   });
+}
+
+async function handleFoodie(req, res) {
+  const body = await readJsonBody(req);
+  const text = cleanText(body.text);
+  if (!text) return fail(res, 400, "Body must be { text, places } with non-empty text.");
+  const places = trimPlacesForModel(body.places);
+
+  const payload = {
+    model: FOODIE_MODEL,
+    max_tokens: 400,
+    system: buildSystemPrompt(places),
+    // User text goes in its own turn — never templated into the system prompt.
+    messages: [{ role: "user", content: text }],
+  };
+
+  let response = await callClaude(payload);
+
+  if (response.status === 400 && !ANTHROPIC_WORKSPACE_ID) {
+    const err = await upstreamError(response, "Claude");
+    if (!/not scoped to a workspace/i.test(err.message)) {
+      console.error(`[foodie] ${err.message}`);
+      return fail(res, 502, `Foodie is unavailable (${err.message.slice(0, 240)})`);
+    }
+    try {
+      ANTHROPIC_WORKSPACE_ID = await discoverWorkspaceId();
+    } catch (lookupErr) {
+      console.error(`[foodie] ${lookupErr.message}`);
+      return fail(res, 502, `This Anthropic key is organization-scoped and no workspace could be found for it (${lookupErr.message.slice(0, 120)}). Use a workspace-scoped key, or add ANTHROPIC_WORKSPACE_ID=wrkspc_… to .env.`);
+    }
+    response = await callClaude(payload);
+  }
 
   if (!response.ok) {
     const err = await upstreamError(response, "Claude");
