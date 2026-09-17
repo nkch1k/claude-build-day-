@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="theme-color" content="#F5F0E8">
+<title>Warmer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --paper: #F5F0E8;
+    --paper-2: #EDE7DC;
+    --ink: #141413;
+    --ink-2: #5E5A54;
+    --muted: #A39E95;
+    --hot: #C15F3C;     /* perfect — deep terracotta */
+    --warm: #D97757;    /* good — Claude terracotta */
+    --kraft: #D4A27F;
+    --cold: #5B7C99;    /* coldspot */
+    --line: rgba(20, 20, 19, 0.10);
+    --shadow: 0 10px 30px rgba(20, 20, 19, 0.16), 0 2px 6px rgba(20, 20, 19, 0.08);
+    --bar-h: 62px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-t: env(safe-area-inset-top, 0px);
+    --sans: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--paper); }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  #map { position: fixed; inset: 0; background: #DCD6CB; }
+  .leaflet-container { font-family: var(--sans); }
+  .heat-canvas { pointer-events: none; }
+  .leaflet-heat-pane { pointer-events: none; }
+  .leaflet-control-attribution {
+    font-family: var(--sans);
+    font-size: 10px;
+    color: var(--ink-2);
+    background: rgba(245, 240, 232, 0.75) !important;
+    border-radius: 8px 0 0 0;
+  }
+  .leaflet-control-attribution a { color: var(--ink-2); }
+  .leaflet-bottom { bottom: calc(var(--bar-h) + var(--safe-b)); }
+
+  /* ---- floating chrome ---------------------------------------------- */
+  .chrome { position: fixed; z-index: 1000; pointer-events: none; }
+  .chrome > * { pointer-events: auto; }
+
+  .top {
+    top: calc(10px + var(--safe-t));
+    left: 12px; right: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; padding: 0 4px; }
+  .brand-name {
+    font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1;
+    text-shadow: 0 1px 0 rgba(245, 240, 232, 0.9), 0 0 14px rgba(245, 240, 232, 0.9);
+  }
+  .brand-sub {
+    font-size: 12px; color: var(--ink-2); font-weight: 500;
+    text-shadow: 0 1px 0 rgba(245, 240, 232, 0.9), 0 0 10px rgba(245, 240, 232, 0.9);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1;
+  }
+  .filter-chip {
+    display: none; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 600; text-transform: lowercase;
+    background: var(--ink); color: var(--paper); border-radius: 999px; padding: 4px 8px 4px 10px;
+  }
+  .filter-chip.on { display: inline-flex; }
+  .filter-chip b { font-weight: 700; opacity: 0.8; }
+
+  .glass {
+    background: rgba(245, 240, 232, 0.82);
+    -webkit-backdrop-filter: blur(14px) saturate(1.1);
+    backdrop-filter: blur(14px) saturate(1.1);
+    border: 1px solid rgba(245, 240, 232, 0.9);
+    box-shadow: 0 1px 2px rgba(20, 20, 19, 0.06), 0 8px 24px rgba(20, 20, 19, 0.10);
+  }
+
+  .tabs {
+    display: flex; gap: 4px; padding: 4px; border-radius: 999px; align-self: flex-start;
+  }
+  .tabs button {
+    flex: 0 0 auto; font-size: 13px; font-weight: 600; color: var(--ink-2);
+    padding: 8px 12px; border-radius: 999px; white-space: nowrap;
+    transition: background .15s, color .15s;
+  }
+  .tabs button.active { background: var(--ink); color: var(--paper); }
+  .tabs button:active { transform: translateY(1px); }
+
+  .legend {
+    position: fixed; z-index: 1000;
+    left: 12px; bottom: calc(var(--bar-h) + 34px + var(--safe-b));
+    padding: 8px 10px; border-radius: 12px;
+    display: grid; gap: 5px; font-size: 11px; font-weight: 500; color: var(--ink-2);
+  }
+  .legend div { display: flex; align-items: center; gap: 7px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 1.5px var(--paper) inset; }
+
+  .pills {
+    position: fixed; z-index: 1000;
+    right: 12px; bottom: calc(var(--bar-h) + 34px + var(--safe-b));
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    height: 48px; padding: 0 20px; border-radius: 999px;
+    font-size: 14px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    box-shadow: var(--shadow);
+    transition: transform .12s;
+  }
+  .pill:active { transform: scale(0.97); }
+  .pill.primary { background: var(--hot); color: var(--paper); height: 54px; padding: 0 24px; font-size: 15px; }
+  .pill.secondary { background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
+  .pill .flame { width: 10px; height: 10px; border-radius: 50%; background: var(--paper); opacity: 0.9;
+    box-shadow: 0 0 0 4px rgba(245, 240, 232, 0.25); }
+
+  /* ---- bottom bar ------------------------------------------------- */
+  .bar {
+    position: fixed; z-index: 1000; left: 0; right: 0; bottom: 0;
+    height: calc(var(--bar-h) + var(--safe-b)); padding-bottom: var(--safe-b);
+    background: rgba(245, 240, 232, 0.94);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    border-top: 1px solid var(--line);
+  }
+  .rank {
+    height: var(--bar-h); display: flex; align-items: center; gap: 8px;
+    padding: 0 12px; overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x proximity; scrollbar-width: none;
+  }
+  .rank::-webkit-scrollbar { display: none; }
+  .rank-empty { font-size: 13px; color: var(--muted); padding: 0 4px; white-space: nowrap; }
+  .chip {
+    scroll-snap-align: start; flex: 0 0 auto;
+    display: flex; align-items: center; gap: 8px;
+    height: 44px; padding: 0 12px 0 10px; border-radius: 12px;
+    background: var(--paper-2); border: 1px solid var(--line);
+    max-width: 200px; text-align: left;
+  }
+  .chip.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+  .chip .rk { font-size: 11px; color: var(--muted); }
+  .chip.active .rk { color: rgba(245, 240, 232, 0.6); }
+  .chip .nm { unicode-bidi: plaintext; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; }
+  .chip .mn { font-size: 12px; font-weight: 600; white-space: nowrap; }
+
+  /* ---- sheets ----------------------------------------------------- */
+  .sheet {
+    position: fixed; z-index: 1100; left: 0; right: 0; bottom: 0;
+    max-height: 82vh; overflow-y: auto;
+    background: var(--paper); border-radius: 22px 22px 0 0;
+    box-shadow: 0 -8px 40px rgba(20, 20, 19, 0.18);
+    padding: 10px 18px calc(18px + var(--safe-b));
+    transform: translateY(105%); transition: transform .3s cubic-bezier(.2,.8,.2,1);
+    visibility: hidden;
+  }
+  .sheet.open { transform: translateY(0); visibility: visible; }
+  .handle { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 12px; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .close {
+    width: 34px; height: 34px; border-radius: 50%; background: var(--paper-2);
+    display: grid; place-items: center; color: var(--ink-2); font-size: 18px; line-height: 1; flex: 0 0 auto;
+  }
+
+  .tier {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 5px 10px; border-radius: 999px; color: var(--paper);
+  }
+  .tier[data-tier="perfect"] { background: var(--hot); }
+  .tier[data-tier="good"] { background: var(--warm); }
+  .tier[data-tier="average"] { background: var(--muted); }
+  .tier[data-tier="cold"] { background: var(--cold); }
+  .heat-score { font-size: 13px; color: var(--ink-2); }
+  .heat-score b { font-weight: 600; color: var(--ink); }
+
+  .card h2 { unicode-bidi: plaintext; margin: 12px 0 2px; font-size: 24px; line-height: 1.15; letter-spacing: -0.02em; font-weight: 700; }
+  .card .sub { font-size: 13px; color: var(--ink-2); margin: 0 0 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .card .sub .open { color: #3E7A55; font-weight: 600; }
+  .card .sub .closed { color: var(--cold); font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+  .stat { background: var(--paper-2); border-radius: 12px; padding: 10px 8px; text-align: center; }
+  .stat .v { font-size: 17px; font-weight: 500; line-height: 1.1; }
+  .stat .v small { font-size: 11px; color: var(--ink-2); margin-left: 1px; }
+  .stat .l { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-top: 4px; font-weight: 600; }
+  .summary { font-size: 14.5px; line-height: 1.45; margin: 0 0 12px; color: var(--ink); }
+  .review { border-left: 2px solid var(--kraft); padding-left: 12px; margin: 0 0 18px; }
+  .review p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+  .review .by { margin-top: 6px; font-size: 12px; color: var(--muted); font-weight: 500; }
+  .review .by .num { color: var(--kraft); }
+  .cold-note { font-size: 13px; color: var(--cold); font-weight: 600; margin: -6px 0 12px; }
+  .go {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; height: 54px; border-radius: 16px; text-decoration: none;
+    background: var(--hot); color: var(--paper); font-size: 16px; font-weight: 700; letter-spacing: 0.04em;
+    box-shadow: 0 6px 18px rgba(193, 95, 60, 0.32);
+  }
+  .go:active { transform: translateY(1px); }
+  .go .num { font-size: 13px; opacity: 0.9; font-weight: 500; }
+
+  .foodie h2 { margin: 10px 0 2px; font-size: 22px; letter-spacing: -0.02em; }
+  .foodie .lede { margin: 0 0 14px; font-size: 13px; color: var(--ink-2); }
+  .quick { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .quick button {
+    font-size: 13px; font-weight: 600; padding: 9px 12px; border-radius: 999px;
+    background: var(--paper-2); border: 1px solid var(--line); color: var(--ink);
+  }
+  .ask { display: flex; gap: 8px; }
+  .ask input {
+    flex: 1; min-width: 0; height: 48px; border-radius: 14px; border: 1px solid var(--line);
+    background: #FFFDFA; padding: 0 14px; font: inherit; font-size: 15px; color: var(--ink);
+  }
+  .ask input:focus { outline: 2px solid var(--warm); outline-offset: -1px; }
+  .ask button {
+    width: 48px; height: 48px; border-radius: 14px; background: var(--ink); color: var(--paper);
+    display: grid; place-items: center; font-size: 18px; flex: 0 0 auto;
+  }
+  .ask button:disabled { opacity: 0.5; }
+  .reply {
+    display: none; margin-top: 14px; padding: 14px; border-radius: 14px;
+    background: var(--paper-2); font-size: 14.5px; line-height: 1.5;
+  }
+  .reply.on { display: block; }
+  .reply .applied { margin-top: 10px; font-size: 11px; color: var(--ink-2); }
+  .reply .applied .num { color: var(--hot); font-weight: 600; }
+  .thinking { display: inline-flex; gap: 4px; align-items: center; height: 16px; }
+  .thinking i { width: 6px; height: 6px; border-radius: 50%; background: var(--warm); animation: bob 1s infinite ease-in-out; }
+  .thinking i:nth-child(2) { animation-delay: .15s; } .thinking i:nth-child(3) { animation-delay: .3s; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); opacity: .5; } 50% { transform: translateY(-4px); opacity: 1; } }
+
+  .toast {
+    position: fixed; z-index: 1200; left: 50%; top: calc(112px + var(--safe-t));
+    transform: translate(-50%, -8px); opacity: 0; pointer-events: none;
+    background: var(--ink); color: var(--paper); font-size: 13px; font-weight: 500;
+    padding: 10px 14px; border-radius: 12px; max-width: calc(100vw - 32px); text-align: center;
+    transition: opacity .2s, transform .2s;
+  }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---- me marker -------------------------------------------------- */
+  .me { position: relative; width: 18px; height: 18px; }
+  .me::before {
+    content: ""; position: absolute; inset: 0; border-radius: 50%;
+    background: rgba(20, 20, 19, 0.28); animation: pulse 2.2s infinite ease-out;
+  }
+  .me::after {
+    content: ""; position: absolute; inset: 3px; border-radius: 50%;
+    background: var(--ink); border: 2.5px solid var(--paper); box-shadow: 0 1px 4px rgba(0,0,0,.3);
+  }
+  @keyframes pulse { 0% { transform: scale(0.8); opacity: 1; } 100% { transform: scale(3); opacity: 0; } }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<header class="chrome top">
+  <div class="brand">
+    <span class="brand-name">Warmer</span>
+    <span class="brand-sub" id="status">finding you…</span>
+    <button class="filter-chip" id="filterChip" type="button"><span id="filterText"></span><b>×</b></button>
+  </div>
+  <nav class="tabs glass" id="tabs" aria-label="Weighting">
+    <button type="button" data-mode="selection">Big selection</button>
+    <button type="button" data-mode="rating">Good reviews</button>
+    <button type="button" data-mode="fast" class="active">Fast</button>
+    <button type="button" data-mode="cheap">Cheap</button>
+  </nav>
+</header>
+
+<aside class="legend glass" aria-label="Legend">
+  <div><span class="dot" style="background:#C15F3C"></span>Perfect</div>
+  <div><span class="dot" style="background:#D97757"></span>Good</div>
+  <div><span class="dot" style="background:#A39E95"></span>Average</div>
+  <div><span class="dot" style="background:#5B7C99"></span>Coldspot</div>
+</aside>
+
+<div class="pills">
+  <button class="pill secondary" id="foodieBtn" type="button">Foodie</button>
+  <button class="pill primary" id="warmBtn" type="button"><span class="flame"></span>Warm me now</button>
+</div>
+
+<nav class="bar" aria-label="Ranked places"><div class="rank" id="rank"><span class="rank-empty">Loading nearby food…</span></div></nav>
+
+<section class="sheet card" id="card" aria-label="Place">
+  <div class="handle"></div>
+  <div class="sheet-head">
+    <span class="tier" id="cTier" data-tier="average">Average</span>
+    <span class="heat-score">heat <b class="num" id="cHeat">0.00</b></span>
+    <button class="close" id="cClose" type="button" aria-label="Close">×</button>
+  </div>
+  <h2 id="cName">—</h2>
+  <p class="sub"><span id="cCuisine">—</span><span id="cOpen"></span></p>
+  <div class="stats">
+    <div class="stat"><div class="v num" id="cRating">—</div><div class="l">rating</div></div>
+    <div class="stat"><div class="v num" id="cMinutes">—</div><div class="l">minutes</div></div>
+    <div class="stat"><div class="v num" id="cPrice">—</div><div class="l">price</div></div>
+    <div class="stat"><div class="v num" id="cDistance">—</div><div class="l">walk</div></div>
+  </div>
+  <p class="cold-note" id="cColdNote" hidden></p>
+  <p class="summary" id="cSummary"></p>
+  <blockquote class="review" id="cReview"><p id="cReviewText"></p><div class="by">— <span id="cReviewAuthor"></span> <span class="num" id="cReviewRating"></span></div></blockquote>
+  <a class="go" id="cGo" target="_blank" rel="noopener noreferrer">Take me there <span class="num" id="cGoMin"></span></a>
+</section>
+
+<section class="sheet foodie" id="foodie" aria-label="Foodie">
+  <div class="handle"></div>
+  <div class="sheet-head">
+    <h2>Foodie</h2>
+    <button class="close" id="fClose" type="button" aria-label="Close">×</button>
+  </div>
+  <p class="lede">Say what you're after. The field re-warms to match.</p>
+  <div class="quick" id="quick">
+    <button type="button">cheap and fast</button>
+    <button type="button">best rated, price aside</button>
+    <button type="button">what should I avoid?</button>
+  </div>
+  <form class="ask" id="askForm">
+    <input id="askInput" type="text" maxlength="300" placeholder="something spicy within 10 minutes…" autocomplete="off" enterkeyhint="send">
+    <button type="submit" id="askBtn" aria-label="Ask">↑</button>
+  </form>
+  <div class="reply" id="reply"><div id="replyText"></div><div class="applied" id="replyApplied"></div></div>
+</section>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  // Rothschild Blvd, Tel Aviv — used when geolocation fails or is denied.
+  const FALLBACK = { lat: 32.0644, lng: 34.7722, label: "Rothschild Blvd, Tel Aviv" };
+
+  const COLORS = { perfect: "#C15F3C", good: "#D97757", average: "#A39E95", cold: "#5B7C99" };
+
+  // Weights over the five signals; each preset sums to 1.
+  const PRESETS = {
+    selection: { selection: 0.50, rating: 0.20, minutes: 0.15, price: 0.05, distance: 0.10 },
+    rating:    { selection: 0.10, rating: 0.55, minutes: 0.15, price: 0.10, distance: 0.10 },
+    fast:      { selection: 0.10, rating: 0.15, minutes: 0.50, price: 0.10, distance: 0.15 },
+    cheap:     { selection: 0.10, rating: 0.15, minutes: 0.20, price: 0.45, distance: 0.10 },
+  };
+
+  const WALK_M_PER_MIN = 80;
+  const BASELINE_MIN = 20; // at or above this a place produces no heat at all
+  const BLOOM_MIN = 8;     // below this a place blooms hard regardless of tab
+  const SEARCH_RADIUS_M = 900;
+  const REFETCH_M = 700;   // pan this far from the last fetch and we fetch again
+  const MARKER_ZOOM = 16;
+
+  // Prep-time bases (minutes until food is in your hand, before walking).
+  const PREP = { takeaway: 4, counter: 7, restaurant: 16 };
+  const PEAK_EXTRA_MIN = 6;      // kitchens queue up 12:00–14:59 and 19:00–21:59
+  const TAKEAWAY_DISCOUNT = 3;   // a sit-down place that also does takeaway is faster
+
+  const TAKEAWAY_TYPES = new Set([
+    "meal_takeaway", "fast_food_restaurant", "sandwich_shop", "hamburger_restaurant",
+    "hot_dog_stand", "food_court", "deli", "juice_shop", "ice_cream_shop", "dessert_shop",
+    "donut_shop", "bagel_shop", "acai_shop", "convenience_store",
+  ]);
+  const COUNTER_TYPES = new Set([
+    "bakery", "pastry_shop", "cafe", "coffee_shop", "tea_house", "cafeteria", "confectionery",
+    "chocolate_shop", "candy_store", "dessert_restaurant",
+  ]);
+
+  // Google tags every place with these; they say nothing about the menu.
+  const GENERIC_TYPES = new Set(["food", "point_of_interest", "establishment", "store", "restaurant", "health", "bar", "night_club", "event_venue"]);
+
+  const CUISINE_ALIASES = {
+    coffee: ["coffee_shop", "cafe"], cafe: ["cafe", "coffee_shop"],
+    pastry: ["bakery"], bread: ["bakery"], sweet: ["dessert", "ice_cream", "bakery", "confectionery"],
+    dessert: ["dessert", "ice_cream", "bakery"], burger: ["hamburger"], burgers: ["hamburger"],
+    sandwich: ["sandwich"], sandwiches: ["sandwich"], sushi: ["sushi", "japanese"],
+    healthy: ["vegan", "vegetarian", "salad", "juice"], vegan: ["vegan"], vegetarian: ["vegetarian", "vegan"],
+    takeaway: ["meal_takeaway"], "fast food": ["fast_food"], fastfood: ["fast_food"],
+    breakfast: ["breakfast", "brunch", "cafe"], brunch: ["brunch", "breakfast"],
+  };
+
+  const $ = (id) => document.getElementById(id);
+
+  const state = {
+    me: { lat: FALLBACK.lat, lng: FALLBACK.lng },
+    meLabel: FALLBACK.label,
+    places: [],
+    scored: [],
+    mode: "fast",
+    customWeights: null,
+    cuisines: [],
+    lastFetch: null,
+    fetching: false,
+    selectedId: null,
+  };
+
+  // ---------------------------------------------------------------------
+  // Map
+  // ---------------------------------------------------------------------
+
+  const map = L.map("map", { zoomControl: false, minZoom: 12, maxZoom: 19, zoomSnap: 0.5 })
+    .setView([FALLBACK.lat, FALLBACK.lng], 16);
+
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+
+  map.createPane("heat");
+  map.getPane("heat").style.zIndex = 350; // tiles 200 < heat 350 < overlay/markers 400+
+
+  const meMarker = L.marker([FALLBACK.lat, FALLBACK.lng], {
+    icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+    interactive: false, zIndexOffset: 1000,
+  }).addTo(map);
+
+  const markers = L.layerGroup().addTo(map);
+
+  // ---------------------------------------------------------------------
+  // Heat layer — one accumulation buffer, LUT colourised in a single pass
+  // ---------------------------------------------------------------------
+
+  function buildLUT() {
+    const c = document.createElement("canvas");
+    c.width = 1; c.height = 256;
+    const ctx = c.getContext("2d");
+    const g = ctx.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0.00, "#5B7C99");
+    g.addColorStop(0.45, "#F5F0E8"); // the cream stop — blue straight to terracotta goes muddy
+    g.addColorStop(0.75, "#D4A27F");
+    g.addColorStop(1.00, "#C15F3C");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 1, 256);
+    return ctx.getImageData(0, 0, 1, 256).data;
+  }
+
+  const HeatLayer = L.Layer.extend({
+    options: { pad: 0.25 },
+
+    initialize(options) {
+      L.setOptions(this, options);
+      this._lut = buildLUT();
+      this._items = [];
+    },
+
+    onAdd(map) {
+      this._map = map;
+      this._canvas = L.DomUtil.create("canvas", "heat-canvas leaflet-zoom-hide", map.getPane("heat"));
+      this._buf = document.createElement("canvas");
+      map.on("moveend zoomend resize", this._reset, this);
+      this._reset();
+    },
+
+    onRemove(map) {
+      map.off("moveend zoomend resize", this._reset, this);
+      L.DomUtil.remove(this._canvas);
+    },
+
+    setData(items) {
+      this._items = items;
+      this.redraw();
+    },
+
+    _reset() {
+      const size = this._map.getSize();
+      this._pad = { x: Math.round(size.x * this.options.pad), y: Math.round(size.y * this.options.pad) };
+      const w = size.x + this._pad.x * 2;
+      const h = size.y + this._pad.y * 2;
+      this._dpr = Math.min(window.devicePixelRatio || 1, 2);
+      for (const c of [this._canvas, this._buf]) {
+        c.width = Math.round(w * this._dpr);
+        c.height = Math.round(h * this._dpr);
+      }
+      this._canvas.style.width = `${w}px`;
+      this._canvas.style.height = `${h}px`;
+      L.DomUtil.setPosition(this._canvas, this._map.containerPointToLayerPoint([-this._pad.x, -this._pad.y]));
+      this.redraw();
+    },
+
+    redraw() {
+      if (!this._map || !this._canvas) return;
+      const W = this._canvas.width, H = this._canvas.height, dpr = this._dpr;
+      const bctx = this._buf.getContext("2d", { willReadFrequently: true });
+      const ctx = this._canvas.getContext("2d");
+
+      // 2. accumulate white blobs; intensity lives in the alpha channel only
+      bctx.setTransform(1, 0, 0, 1, 0, 0);
+      bctx.clearRect(0, 0, W, H);
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const zoom = this._map.getZoom();
+      const baseRadius = Math.max(6, 13 * Math.pow(2, zoom - 14)); // px before the 60px cap; floor keeps the field visible zoomed out
+      const cw = W / dpr, ch = H / dpr;
+
+      for (const it of this._items) {
+        if (it.heat <= 0) continue;
+        const p = this._map.latLngToContainerPoint([it.lat, it.lng]);
+        const x = p.x + this._pad.x, y = p.y + this._pad.y;
+        const r = Math.min(60, baseRadius * (0.55 + 0.65 * it.heat) * it.bloom);
+        if (x < -r || y < -r || x > cw + r || y > ch + r) continue;
+        const g = bctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, "rgba(255,255,255,1)");
+        g.addColorStop(0.45, "rgba(255,255,255,0.5)");
+        g.addColorStop(1, "rgba(255,255,255,0)");
+        bctx.globalAlpha = Math.min(1, (0.28 + 0.62 * it.heat) * it.bloom);
+        bctx.fillStyle = g;
+        bctx.beginPath();
+        bctx.arc(x, y, r, 0, Math.PI * 2);
+        bctx.fill();
+      }
+      bctx.globalAlpha = 1;
+      bctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      // 4. colourise: RGB = LUT[alpha]; alpha lifted on a curve so the cream halo reads
+      const img = bctx.getImageData(0, 0, W, H);
+      const d = img.data, lut = this._lut;
+      for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3];
+        if (a === 0) continue;
+        const j = a * 4;
+        d[i] = lut[j]; d[i + 1] = lut[j + 1]; d[i + 2] = lut[j + 2];
+        d[i + 3] = Math.round(255 * Math.pow(a / 255, 0.75));
+      }
+      bctx.putImageData(img, 0, 0);
+
+      // 1. cold wash under everything, then the field on top
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = "rgba(91,124,153,0.55)"; // #5B7C99
+      ctx.fillRect(0, 0, W, H);
+      ctx.drawImage(this._buf, 0, 0);
+    },
+  });
+
+  const heat = new HeatLayer().addTo(map);
+
+  // ---------------------------------------------------------------------
+  // Scoring
+  // ---------------------------------------------------------------------
+
+  function haversineM(a, b) {
+    const R = 6371000, toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+  function categoryOf(place) {
+    if (TAKEAWAY_TYPES.has(place.primaryType)) return "takeaway";
+    if (COUNTER_TYPES.has(place.primaryType)) return "counter";
+    return "restaurant";
+  }
+
+  function prettyType(type) {
+    const special = {
+      restaurant: "Restaurant", meal_takeaway: "Takeaway", cafe: "Café", coffee_shop: "Coffee",
+      fast_food_restaurant: "Fast food", meal_delivery: "Delivery", bar: "Bar", beer_garden: "Beer garden",
+      food_court: "Food court", hamburger_restaurant: "Burgers", ice_cream_shop: "Ice cream",
+    };
+    if (special[type]) return special[type];
+    const words = type.replace(/_restaurant$|_shop$|_store$/, "").split("_");
+    return words.map((w, i) => (i === 0 ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+  }
+
+  function isPeakHour() {
+    const h = new Date().getHours();
+    return (h >= 12 && h <= 14) || (h >= 19 && h <= 21);
+  }
+
+  function activeWeights() {
+    return state.customWeights || PRESETS[state.mode];
+  }
+
+  function scorePlace(place, w, peak) {
+    const walkM = haversineM(state.me, place);
+    const walkMin = walkM / WALK_M_PER_MIN;
+    const category = categoryOf(place);
+
+    let prep = PREP[category];
+    if (peak) prep += PEAK_EXTRA_MIN;
+    if (category !== "takeaway" && place.types.includes("meal_takeaway")) prep -= TAKEAWAY_DISCOUNT;
+    const minutes = prep + walkMin;
+
+    const n = place.userRatingCount || 0;
+    const damp = clamp01(Math.log1p(n) / Math.log1p(150)); // ~150 ratings = fully trusted
+    const foodTypes = place.types.filter((t) => !GENERIC_TYPES.has(t)).length;
+    const signals = {
+      // breadth of what they serve, plus crowd size as a proxy for a big menu
+      selection: clamp01(0.5 * Math.min(1, foodTypes / 5) + 0.5 * clamp01(Math.log1p(n) / Math.log1p(5000))),
+      // 3.5★ → 0, 4.9★ → 1: almost everything sits between 4.0 and 4.8, so a 1–5 scale can't separate them
+      rating: place.rating ? clamp01((place.rating - 3.5) / 1.4) * (0.35 + 0.65 * damp) : 0,
+      minutes: minutes <= BLOOM_MIN ? 1 : clamp01((BASELINE_MIN - minutes) / (BASELINE_MIN - BLOOM_MIN)),
+      price: place.priceLevel === null ? 0.5 : clamp01((4 - place.priceLevel) / 3),
+      distance: 1 - clamp01(walkM / SEARCH_RADIUS_M),
+    };
+
+    const closed = place.openNow === false;
+    let heatValue = 0;
+    if (minutes < BASELINE_MIN && !closed) {
+      heatValue = w.selection * signals.selection + w.rating * signals.rating + w.minutes * signals.minutes +
+        w.price * signals.price + w.distance * signals.distance;
+    }
+    heatValue = clamp01(heatValue);
+
+    const tier = heatValue <= 0 ? "cold" : heatValue >= 0.72 ? "perfect" : heatValue >= 0.5 ? "good" : "average";
+
+    return {
+      id: place.id, place, lat: place.lat, lng: place.lng,
+      walkM, walkMin, prep, minutes, signals, heat: heatValue, tier, closed,
+      bloom: minutes < BLOOM_MIN && !closed ? 1.25 : 1,
+      cuisine: prettyType(place.primaryType),
+      filtered: false,
+    };
+  }
+
+  function matchesCuisine(place, cuisines) {
+    const hay = [place.primaryType, ...place.types, place.name.toLowerCase()].join(" ");
+    return cuisines.some((c) => {
+      const needles = [c.replace(/\s+/g, "_"), ...(CUISINE_ALIASES[c] || [])];
+      return needles.some((n) => hay.includes(n));
+    });
+  }
+
+  function rescore() {
+    const w = activeWeights();
+    const peak = isPeakHour();
+    const scored = state.places.map((p) => scorePlace(p, w, peak));
+
+    if (state.cuisines.length) {
+      const hits = scored.filter((s) => matchesCuisine(s.place, state.cuisines));
+      if (hits.length) {
+        for (const s of scored) s.filtered = !matchesCuisine(s.place, state.cuisines);
+      } else {
+        toast(`No ${state.cuisines.join(" / ")} within ${SEARCH_RADIUS_M} m — showing everything`);
+        state.cuisines = [];
+      }
+    }
+
+    scored.sort((a, b) => {
+      if (a.filtered !== b.filtered) return a.filtered ? 1 : -1;
+      return b.heat - a.heat || a.minutes - b.minutes;
+    });
+    state.scored = scored;
+
+    heat.setData(scored.map((s) => ({ lat: s.lat, lng: s.lng, heat: s.filtered ? 0 : s.heat, bloom: s.bloom })));
+    drawMarkers();
+    renderRank();
+    renderFilterChip();
+  }
+
+  // ---------------------------------------------------------------------
+  // Markers, rank bar, chrome
+  // ---------------------------------------------------------------------
+
+  function drawMarkers() {
+    markers.clearLayers();
+    if (map.getZoom() < MARKER_ZOOM) return;
+    for (const s of state.scored) {
+      const m = L.circleMarker([s.lat, s.lng], {
+        radius: s.filtered ? 4 : s.tier === "cold" ? 6 : 7,
+        fillColor: s.filtered ? COLORS.average : COLORS[s.tier],
+        fillOpacity: s.filtered ? 0.35 : 1,
+        color: "#F5F0E8",
+        weight: s.filtered ? 1 : 2,
+        opacity: s.filtered ? 0.4 : 1,
+        bubblingMouseEvents: false, // otherwise the map's click handler closes the card we just opened
+      });
+      m.on("click", () => openCard(s, false));
+      markers.addLayer(m);
+    }
+  }
+
+  function renderRank() {
+    const rank = $("rank");
+    rank.textContent = "";
+    const visible = state.scored.filter((s) => !s.filtered);
+    if (!visible.length) {
+      const empty = document.createElement("span");
+      empty.className = "rank-empty";
+      empty.textContent = state.places.length ? "Nothing matches — clear the filter" : "No places loaded";
+      rank.appendChild(empty);
+      return;
+    }
+    visible.slice(0, 25).forEach((s, i) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip" + (s.id === state.selectedId ? " active" : "");
+      const rk = document.createElement("span"); rk.className = "rk num"; rk.textContent = String(i + 1);
+      const nm = document.createElement("span"); nm.className = "nm"; nm.textContent = s.place.name;
+      const mn = document.createElement("span"); mn.className = "mn num"; mn.textContent = `${Math.round(s.minutes)} min`;
+      mn.style.color = s.id === state.selectedId ? "" : COLORS[s.tier];
+      chip.append(rk, nm, mn);
+      chip.addEventListener("click", () => openCard(s, true));
+      rank.appendChild(chip);
+    });
+  }
+
+  function renderFilterChip() {
+    const chip = $("filterChip");
+    if (state.cuisines.length) {
+      $("filterText").textContent = state.cuisines.join(", ");
+      chip.classList.add("on");
+    } else {
+      chip.classList.remove("on");
+    }
+  }
+
+  function setStatus(text) { $("status").textContent = text; }
+
+  let toastTimer = 0;
+  function toast(message) {
+    const el = $("toast");
+    el.textContent = message;
+    el.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("on"), 3800);
+  }
+
+  function setActiveTab(mode) {
+    for (const b of $("tabs").querySelectorAll("button")) b.classList.toggle("active", b.dataset.mode === mode);
+  }
+
+  const fmtDistance = (m) => (m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1)} km`);
+  const fmtPrice = (level) => (level === null ? "—" : level === 0 ? "free" : "$".repeat(level));
+
+  // ---------------------------------------------------------------------
+  // Card
+  // ---------------------------------------------------------------------
+
+  function openCard(s, pan) {
+    const p = s.place;
+    state.selectedId = s.id;
+    closeFoodie();
+
+    const tierEl = $("cTier");
+    tierEl.dataset.tier = s.tier;
+    tierEl.textContent = s.tier === "cold" ? "Coldspot" : s.tier;
+    $("cHeat").textContent = s.heat.toFixed(2);
+    $("cName").textContent = p.name;
+    $("cCuisine").textContent = s.cuisine;
+    const openEl = $("cOpen");
+    openEl.className = p.openNow === true ? "open" : p.openNow === false ? "closed" : "";
+    openEl.textContent = p.openNow === true ? "· open now" : p.openNow === false ? "· closed" : "";
+
+    $("cRating").textContent = p.rating ? p.rating.toFixed(1) : "—";
+    if (p.userRatingCount) {
+      const small = document.createElement("small");
+      small.textContent = `(${p.userRatingCount >= 1000 ? `${(p.userRatingCount / 1000).toFixed(1)}k` : p.userRatingCount})`;
+      $("cRating").append(small);
+    }
+    $("cMinutes").textContent = String(Math.round(s.minutes));
+    $("cPrice").textContent = fmtPrice(p.priceLevel);
+    $("cDistance").textContent = fmtDistance(s.walkM);
+
+    const note = $("cColdNote");
+    if (s.closed) { note.hidden = false; note.textContent = "Closed right now — no heat until it opens."; }
+    else if (s.minutes >= BASELINE_MIN) { note.hidden = false; note.textContent = `About ${Math.round(s.minutes)} minutes to food in hand (${Math.round(s.prep)} min prep + ${Math.round(s.walkMin)} min walk). Over the 20-minute line.`; }
+    else { note.hidden = true; note.textContent = ""; }
+
+    $("cSummary").textContent = p.editorialSummary || "";
+    $("cSummary").hidden = !p.editorialSummary;
+
+    const review = $("cReview");
+    if (p.review) {
+      review.hidden = false;
+      $("cReviewText").textContent = `“${p.review.text.length > 220 ? p.review.text.slice(0, 217).trimEnd() + "…" : p.review.text}”`;
+      $("cReviewAuthor").textContent = p.review.author;
+      $("cReviewRating").textContent = p.review.rating ? `★ ${p.review.rating}` : "";
+    } else {
+      review.hidden = true;
+    }
+
+    $("cGo").href =
+      `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(p.name)}` +
+      `&destination_place_id=${encodeURIComponent(p.id)}&travelmode=walking`;
+    $("cGoMin").textContent = `${Math.round(s.walkMin)} min walk`;
+
+    $("card").classList.add("open");
+    $("card").scrollTop = 0;
+    renderRank();
+
+    if (pan) {
+      map.flyTo([s.lat, s.lng], Math.max(map.getZoom(), MARKER_ZOOM), { duration: 0.6 });
+    } else {
+      // keep the tapped dot visible above the sheet
+      const pt = map.latLngToContainerPoint([s.lat, s.lng]);
+      const size = map.getSize();
+      if (pt.y > size.y * 0.4) map.panBy([0, pt.y - size.y * 0.3], { duration: 0.4 });
+    }
+  }
+
+  function closeCard() {
+    $("card").classList.remove("open");
+    state.selectedId = null;
+    renderRank();
+  }
+
+  // ---------------------------------------------------------------------
+  // Warm me now / Foodie
+  // ---------------------------------------------------------------------
+
+  function warmMeNow() {
+    const best = state.scored.find((s) => !s.filtered && s.heat > 0);
+    if (!best) {
+      toast(state.places.length ? "Nothing warm within 20 minutes right now." : "Still loading places…");
+      return;
+    }
+    openCard(best, true);
+  }
+
+  function openFoodie() {
+    closeCard();
+    $("foodie").classList.add("open");
+  }
+  function closeFoodie() { $("foodie").classList.remove("open"); }
+
+  function placesForModel() {
+    return state.scored.map((s) => ({
+      name: s.place.name,
+      cuisine: s.cuisine,
+      tier: s.tier === "cold" ? "coldspot" : s.tier,
+      minutes: Math.round(s.minutes),
+      price: fmtPrice(s.place.priceLevel),
+      rating: s.place.rating,
+      distance: fmtDistance(s.walkM),
+    }));
+  }
+
+  async function askFoodie(text) {
+    const trimmed = text.trim().slice(0, 300);
+    if (!trimmed) return;
+    const reply = $("reply"), replyText = $("replyText"), applied = $("replyApplied"), btn = $("askBtn");
+    reply.classList.add("on");
+    replyText.textContent = "";
+    const dots = document.createElement("span");
+    dots.className = "thinking";
+    for (let i = 0; i < 3; i++) dots.appendChild(document.createElement("i"));
+    replyText.appendChild(dots);
+    applied.textContent = "";
+    btn.disabled = true;
+
+    try {
+      const r = await fetch("/api/foodie", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: trimmed, places: placesForModel() }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+
+      if (data.weights) {
+        const w = data.weights;
+        const total = w.selection + w.rating + w.fast + w.cheap || 1;
+        // distance keeps a small fixed share; the model's four keys split the rest
+        const share = 0.9;
+        state.customWeights = {
+          selection: (w.selection / total) * share,
+          rating: (w.rating / total) * share,
+          minutes: (w.fast / total) * share,
+          price: (w.cheap / total) * share,
+          distance: 0.1,
+        };
+        setActiveTab(null);
+      }
+      state.cuisines = Array.isArray(data.cuisines) ? data.cuisines : [];
+      rescore();
+
+      replyText.textContent = data.reply;
+      const bits = [];
+      if (state.cuisines.length) bits.push(`filter: ${state.cuisines.join(", ")}`);
+      if (data.weights) {
+        const w = data.weights;
+        const top = Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 2)
+          .map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(" · ");
+        bits.push(`weights → ${top}`);
+      }
+      applied.textContent = bits.length ? `Applied ${bits.join(" · ")}` : "No filter change — field unchanged";
+    } catch (error) {
+      replyText.textContent = `Foodie couldn't answer: ${error.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Data
+  // ---------------------------------------------------------------------
+
+  async function loadPlaces(center) {
+    if (state.fetching) return;
+    state.fetching = true;
+    setStatus("finding food…");
+    try {
+      const r = await fetch("/api/places", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ lat: center.lat, lng: center.lng }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      state.places = data.places;
+      state.lastFetch = { lat: center.lat, lng: center.lng };
+      rescore();
+      const warm = state.scored.filter((s) => s.heat > 0 && !s.filtered).length;
+      setStatus(`${warm} warm of ${state.places.length} · ${state.meLabel}`);
+    } catch (error) {
+      toast(`Couldn't load places: ${error.message}`);
+      setStatus(state.places.length ? state.meLabel : "no places loaded");
+    } finally {
+      state.fetching = false;
+    }
+  }
+
+  function setMe(lat, lng, label) {
+    state.me = { lat, lng };
+    state.meLabel = label;
+    meMarker.setLatLng([lat, lng]);
+  }
+
+  function locate() {
+    const useFallback = () => {
+      setMe(FALLBACK.lat, FALLBACK.lng, FALLBACK.label); // Rothschild Blvd, Tel Aviv
+      map.setView([FALLBACK.lat, FALLBACK.lng], 16);
+      loadPlaces(state.me);
+    };
+    if (!navigator.geolocation) return useFallback();
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setMe(pos.coords.latitude, pos.coords.longitude, "near you");
+        map.setView([state.me.lat, state.me.lng], 16);
+        loadPlaces(state.me);
+      },
+      useFallback,
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Wiring
+  // ---------------------------------------------------------------------
+
+  $("tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-mode]");
+    if (!b) return;
+    state.mode = b.dataset.mode;
+    state.customWeights = null;
+    setActiveTab(state.mode);
+    rescore();
+  });
+
+  $("filterChip").addEventListener("click", () => { state.cuisines = []; rescore(); });
+  $("warmBtn").addEventListener("click", warmMeNow);
+  $("foodieBtn").addEventListener("click", openFoodie);
+  $("cClose").addEventListener("click", closeCard);
+  $("fClose").addEventListener("click", closeFoodie);
+
+  $("quick").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    $("askInput").value = b.textContent;
+    askFoodie(b.textContent);
+  });
+  $("askForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    askFoodie($("askInput").value);
+  });
+
+  map.on("click", () => { closeCard(); closeFoodie(); });
+  map.on("zoomend", drawMarkers);
+  map.on("moveend", () => {
+    if (map.getZoom() < 14 || state.fetching || !state.lastFetch) return;
+    const c = map.getCenter();
+    if (haversineM(c, state.lastFetch) > REFETCH_M) loadPlaces({ lat: c.lat, lng: c.lng });
+  });
+
+  // Re-run the peak-hour check as the clock moves.
+  setInterval(() => { if (state.places.length) rescore(); }, 5 * 60 * 1000);
+
+  locate();
+})();
+</script>
+</body>
+</html>

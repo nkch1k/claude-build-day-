@@ -1,0 +1,449 @@
+// Warmer — local server. Static index.html + two proxies that keep the API keys
+// server-side. Zero dependencies: node:http, node:fs, global fetch.
+//
+//   node --env-file=.env server.mjs   →   http://localhost:3000
+
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const HOST = "127.0.0.1";
+const PORT = 3000;
+
+const PLACES_KEY = process.env.GOOGLE_PLACES_API_KEY;
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+
+const missing = [
+  !PLACES_KEY && "GOOGLE_PLACES_API_KEY",
+  !ANTHROPIC_KEY && "ANTHROPIC_API_KEY",
+].filter(Boolean);
+if (missing.length) {
+  console.error(
+    `Missing ${missing.join(" and ")}.\n` +
+      `Put them in .env next to server.mjs and start with:\n` +
+      `  node --env-file=.env server.mjs`,
+  );
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// HTTP plumbing
+// ---------------------------------------------------------------------------
+
+const MAX_BODY_BYTES = 64 * 1024;
+
+// C0 and C1 control characters (plus DEL). Built from code points so the
+// source file itself never contains a control character.
+const CONTROL_CHARS = new RegExp(
+  `[${String.fromCharCode(0)}-${String.fromCharCode(31)}${String.fromCharCode(127)}-${String.fromCharCode(159)}]`,
+  "g",
+);
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(Object.assign(new Error("Body too large"), { status: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"));
+      } catch {
+        reject(Object.assign(new Error("Body must be JSON"), { status: 400 }));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function sendJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": Buffer.byteLength(body),
+    "cache-control": "no-store",
+  });
+  res.end(body);
+}
+
+function fail(res, status, message) {
+  sendJson(res, status, { error: message });
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/places — Google Places API (New) Nearby Search proxy
+// ---------------------------------------------------------------------------
+
+const PLACES_URL = "https://places.googleapis.com/v1/places:searchNearby";
+const PLACE_TYPES = ["restaurant", "cafe", "bakery", "meal_takeaway"];
+const RADIUS_M = 900;
+const MAX_PLACES = 60;
+const CACHE_TTL_MS = 5 * 60 * 1000;
+
+const FIELD_MASK = [
+  "places.id",
+  "places.displayName",
+  "places.location",
+  "places.primaryType",
+  "places.types",
+  "places.rating",
+  "places.userRatingCount",
+  "places.priceLevel",
+  "places.editorialSummary",
+  "places.reviews",
+  "places.currentOpeningHours.openNow",
+].join(",");
+
+const PRICE_LEVELS = {
+  PRICE_LEVEL_FREE: 0,
+  PRICE_LEVEL_INEXPENSIVE: 1,
+  PRICE_LEVEL_MODERATE: 2,
+  PRICE_LEVEL_EXPENSIVE: 3,
+  PRICE_LEVEL_VERY_EXPENSIVE: 4,
+};
+
+// Keyed by lat/lng rounded to 3 decimals (~110 m cells) so small pans reuse
+// the same result instead of burning quota.
+const placesCache = new Map();
+
+function cacheKey(lat, lng) {
+  return `${lat.toFixed(3)},${lng.toFixed(3)}`;
+}
+
+function pruneCache() {
+  const now = Date.now();
+  for (const [key, entry] of placesCache) {
+    if (now - entry.at > CACHE_TTL_MS) placesCache.delete(key);
+  }
+}
+
+function isValidCoordinate(lat, lng) {
+  return (
+    typeof lat === "number" && Number.isFinite(lat) && lat >= -90 && lat <= 90 &&
+    typeof lng === "number" && Number.isFinite(lng) && lng >= -180 && lng <= 180
+  );
+}
+
+async function upstreamError(response, label) {
+  let detail = `${response.status}`;
+  try {
+    const err = await response.json();
+    if (err?.error?.message) detail = `${response.status} ${err.error.message}`;
+  } catch {
+    // keep the bare status code
+  }
+  return new Error(`${label}: ${detail}`);
+}
+
+async function searchNearby(lat, lng, type) {
+  const response = await fetch(PLACES_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-goog-api-key": PLACES_KEY,
+      "x-goog-fieldmask": FIELD_MASK,
+    },
+    body: JSON.stringify({
+      includedTypes: [type],
+      maxResultCount: 20,
+      locationRestriction: {
+        circle: { center: { latitude: lat, longitude: lng }, radius: RADIUS_M },
+      },
+    }),
+  });
+
+  if (!response.ok) throw await upstreamError(response, `Places ${type}`);
+
+  const data = await response.json();
+  return Array.isArray(data.places) ? data.places : [];
+}
+
+function firstReview(reviews) {
+  if (!Array.isArray(reviews)) return null;
+  for (const review of reviews) {
+    const text = review?.text?.text;
+    if (typeof text === "string" && text.trim()) {
+      return {
+        text: text.trim(),
+        author: review?.authorAttribution?.displayName || "Google user",
+        rating: typeof review?.rating === "number" ? review.rating : null,
+      };
+    }
+  }
+  return null;
+}
+
+function trimPlace(place) {
+  const lat = place?.location?.latitude;
+  const lng = place?.location?.longitude;
+  if (!isValidCoordinate(lat, lng) || typeof place.id !== "string") return null;
+  return {
+    id: place.id,
+    name: place.displayName?.text || "Unnamed",
+    lat,
+    lng,
+    primaryType: place.primaryType || "restaurant",
+    types: Array.isArray(place.types) ? place.types.slice(0, 12) : [],
+    rating: typeof place.rating === "number" ? place.rating : null,
+    userRatingCount: typeof place.userRatingCount === "number" ? place.userRatingCount : 0,
+    priceLevel: PRICE_LEVELS[place.priceLevel] ?? null,
+    editorialSummary: place.editorialSummary?.text || null,
+    review: firstReview(place.reviews),
+    openNow: typeof place.currentOpeningHours?.openNow === "boolean"
+      ? place.currentOpeningHours.openNow
+      : null,
+  };
+}
+
+async function handlePlaces(req, res) {
+  const body = await readJsonBody(req);
+  const { lat, lng } = body;
+  if (!isValidCoordinate(lat, lng)) {
+    return fail(res, 400, "Body must be { lat, lng } with finite coordinates in range.");
+  }
+
+  pruneCache();
+  const key = cacheKey(lat, lng);
+  const cached = placesCache.get(key);
+  if (cached) {
+    return sendJson(res, 200, { places: cached.places, cached: true });
+  }
+
+  const results = await Promise.allSettled(
+    PLACE_TYPES.map((type) => searchNearby(lat, lng, type)),
+  );
+
+  const failures = results.filter((r) => r.status === "rejected");
+  const succeeded = results.filter((r) => r.status === "fulfilled");
+  if (succeeded.length === 0) {
+    const reason = failures[0]?.reason?.message || "Places request failed";
+    console.error(`[places] ${reason}`);
+    return fail(res, 502, reason.slice(0, 200));
+  }
+  for (const f of failures) console.warn(`[places] partial: ${f.reason?.message}`);
+
+  const byId = new Map();
+  for (const r of succeeded) {
+    for (const raw of r.value) {
+      const place = trimPlace(raw);
+      if (place && !byId.has(place.id)) byId.set(place.id, place);
+      if (byId.size >= MAX_PLACES) break;
+    }
+    if (byId.size >= MAX_PLACES) break;
+  }
+
+  const places = [...byId.values()];
+  placesCache.set(key, { at: Date.now(), places });
+  sendJson(res, 200, { places, cached: false });
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/foodie — Claude proxy
+// ---------------------------------------------------------------------------
+
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
+const FOODIE_MODEL = "claude-haiku-4-5-20251001";
+const MAX_USER_CHARS = 300;
+const MAX_PLACES_FOR_MODEL = 60;
+
+const FALLBACK = {
+  cuisines: [],
+  weights: null,
+  reply: "I couldn't work that one out. Try one of the quick prompts, or ask for something like \"cheap and fast\".",
+};
+
+const WEIGHT_KEYS = ["selection", "rating", "fast", "cheap"];
+
+function cleanText(value) {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(CONTROL_CHARS, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_USER_CHARS);
+}
+
+function str(value, max) {
+  return typeof value === "string" ? value.replace(CONTROL_CHARS, "").slice(0, max) : "";
+}
+
+function num(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function trimPlacesForModel(places) {
+  if (!Array.isArray(places)) return [];
+  return places.slice(0, MAX_PLACES_FOR_MODEL).map((p) => ({
+    name: str(p?.name, 80),
+    cuisine: str(p?.cuisine, 40),
+    tier: str(p?.tier, 12),
+    minutes: num(p?.minutes),
+    price: str(p?.price, 8),
+    rating: num(p?.rating),
+    distance: str(p?.distance, 12),
+  })).filter((p) => p.name);
+}
+
+function buildSystemPrompt(places) {
+  const list = places
+    .map((p) =>
+      `- ${p.name} | ${p.cuisine || "food"} | ${p.tier || "unknown"} | ` +
+      `${p.minutes ?? "?"} min to food in hand | price ${p.price || "?"} | ` +
+      `rating ${p.rating ?? "?"} | ${p.distance || "?"} away`,
+    )
+    .join("\n");
+
+  return [
+    "You are Foodie, the assistant inside Warmer, a map that shows good, fast food nearby as a heat field.",
+    "The user is hungry and on foot. Minutes means total time until food is in their hand (prep + walk).",
+    "Tiers: perfect and good are warm; average is neutral; coldspot means 20+ minutes or closed and is shown in blue.",
+    "",
+    "Answer ONLY with a single JSON object, no markdown fences, no prose outside the JSON:",
+    "{",
+    '  "cuisines": ["mexican"],',
+    '  "weights": { "selection": 0.1, "rating": 0.2, "fast": 0.5, "cheap": 0.2 },',
+    '  "reply": "one short paragraph"',
+    "}",
+    "",
+    "Rules:",
+    "- cuisines: lowercase cuisine or food-type words the user asked for (e.g. pizza, sushi, coffee, mexican). [] if none.",
+    "- weights: how much the user cares about each of selection, rating, fast, cheap, values 0..1 summing to about 1. null if they expressed no preference.",
+    "- reply: one short paragraph naming the real top 3 places for this request, each with minutes, price, rating and distance taken from the list. Plain text, no lists, no markdown.",
+    "- If the user asks what to avoid, name the coldspot places and say why (long wait or closed).",
+    "- You may only name places that appear in the list below. Never invent a place, a rating or a time.",
+    "- If nothing in the list fits, say so briefly and suggest the closest alternatives from the list.",
+    "",
+    "Places near the user:",
+    list || "(no places loaded yet)",
+  ].join("\n");
+}
+
+function extractJson(text) {
+  let s = text.trim();
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) throw new Error("no object");
+  return JSON.parse(s.slice(start, end + 1));
+}
+
+function normalizeFoodie(parsed) {
+  const cuisines = Array.isArray(parsed.cuisines)
+    ? parsed.cuisines
+        .filter((c) => typeof c === "string")
+        .map((c) => c.toLowerCase().trim())
+        .filter(Boolean)
+        .slice(0, 6)
+    : [];
+
+  let weights = null;
+  if (parsed.weights && typeof parsed.weights === "object") {
+    weights = {};
+    let total = 0;
+    for (const key of WEIGHT_KEYS) {
+      const v = Number(parsed.weights[key]);
+      weights[key] = Number.isFinite(v) && v > 0 ? v : 0;
+      total += weights[key];
+    }
+    if (total <= 0) weights = null;
+    else for (const key of WEIGHT_KEYS) weights[key] = weights[key] / total;
+  }
+
+  const reply = typeof parsed.reply === "string" && parsed.reply.trim()
+    ? parsed.reply.trim().slice(0, 900)
+    : FALLBACK.reply;
+
+  return { cuisines, weights, reply };
+}
+
+async function handleFoodie(req, res) {
+  const body = await readJsonBody(req);
+  const text = cleanText(body.text);
+  if (!text) return fail(res, 400, "Body must be { text, places } with non-empty text.");
+  const places = trimPlacesForModel(body.places);
+
+  const response = await fetch(ANTHROPIC_URL, {
+    method: "POST",
+    headers: {
+      "x-api-key": ANTHROPIC_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: FOODIE_MODEL,
+      max_tokens: 400,
+      system: buildSystemPrompt(places),
+      // User text goes in its own turn — never templated into the system prompt.
+      messages: [{ role: "user", content: text }],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await upstreamError(response, "Claude");
+    console.error(`[foodie] ${err.message}`);
+    return fail(res, 502, `Foodie is unavailable (${err.message.slice(0, 120)})`);
+  }
+
+  const data = await response.json();
+  const raw = Array.isArray(data.content)
+    ? data.content.filter((b) => b.type === "text").map((b) => b.text).join("")
+    : "";
+
+  try {
+    sendJson(res, 200, normalizeFoodie(extractJson(raw)));
+  } catch {
+    console.warn("[foodie] model reply was not JSON; sending fallback");
+    sendJson(res, 200, FALLBACK);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+const INDEX_PATH = path.join(HERE, "index.html");
+
+function serveIndex(res) {
+  fs.readFile(INDEX_PATH, (err, html) => {
+    if (err) return fail(res, 500, "index.html is missing");
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "content-length": html.length,
+      "cache-control": "no-store",
+    });
+    res.end(html);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${HOST}:${PORT}`);
+  try {
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      return serveIndex(res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/places") {
+      return await handlePlaces(req, res);
+    }
+    if (req.method === "POST" && url.pathname === "/api/foodie") {
+      return await handleFoodie(req, res);
+    }
+    fail(res, 404, "Not found");
+  } catch (error) {
+    const status = error?.status || 500;
+    if (status >= 500) console.error(`[server] ${error?.message || error}`);
+    if (!res.headersSent) fail(res, status, error?.message || "Server error");
+  }
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(`Warmer → http://localhost:${PORT}`);
+});

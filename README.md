@@ -59,3 +59,18 @@ src/examples/tools.ts    tool runner with two Zod-typed tools
 - Streaming is the right default for anything with a large `max_tokens` — it avoids
   HTTP request timeouts.
 - Billing, usage, and rate limits all live in the Console under your key's workspace.
+
+## Warmer (`warmer/`)
+
+A mobile web app that shows good, *fast* food nearby as a heat field on a real street
+map. Zero dependencies, no build step — one HTML file and one Node script.
+
+```bash
+cd warmer
+printf 'GOOGLE_PLACES_API_KEY=...\nANTHROPIC_API_KEY=...\n' > .env   # gitignored
+node --env-file=.env server.mjs        # → http://localhost:3000  (Node 20+)
+```
+
+Demo it in Chrome's device toolbar at 390×844. Denied/absent geolocation falls back to
+Rothschild Blvd, Tel Aviv. Keys stay on the server: the browser only ever talks to
+`/api/places` (Google Places New, cached 5 min) and `/api/foodie` (Claude Haiku 4.5).
