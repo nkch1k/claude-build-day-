@@ -365,13 +365,15 @@ async function handlePlaces(req, res) {
 // ---------------------------------------------------------------------------
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-const FOODIE_MODEL = "claude-haiku-4-5-20251001";
+const FOODIE_MODEL = "claude-sonnet-5";
 const MAX_USER_CHARS = 300;
 const MAX_PLACES_FOR_MODEL = 60;
 
 const FALLBACK = {
   cuisines: [],
   weights: null,
+  max_minutes: null,
+  max_price: null,
   reply: "I couldn't work that one out. Try one of the quick prompts, or ask for something like \"cheap and fast\".",
 };
 
@@ -399,42 +401,79 @@ function trimPlacesForModel(places) {
   return places.slice(0, MAX_PLACES_FOR_MODEL).map((p) => ({
     name: str(p?.name, 80),
     cuisine: str(p?.cuisine, 40),
+    types: Array.isArray(p?.types) ? p.types.slice(0, 6).map((t) => str(t, 32)).filter(Boolean) : [],
     tier: str(p?.tier, 12),
     minutes: num(p?.minutes),
     price: str(p?.price, 8),
     rating: num(p?.rating),
+    ratingCount: num(p?.ratingCount),
     distance: str(p?.distance, 12),
+    open: typeof p?.open === "boolean" ? p.open : null,
+    summary: str(p?.summary, 120),
   })).filter((p) => p.name);
 }
 
+// The response contract. Enforced server-side by the API, so the reply is
+// always parseable JSON in exactly this shape.
+const FOODIE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["cuisines", "weights", "max_minutes", "max_price", "reply"],
+  properties: {
+    cuisines: { type: "array", items: { type: "string" } },
+    weights: {
+      anyOf: [
+        { type: "null" },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["selection", "rating", "fast", "cheap"],
+          properties: {
+            selection: { type: "number" }, rating: { type: "number" },
+            fast: { type: "number" }, cheap: { type: "number" },
+          },
+        },
+      ],
+    },
+    max_minutes: { type: ["integer", "null"] },
+    max_price: { type: ["integer", "null"] },
+    reply: { type: "string" },
+  },
+};
+
 function buildSystemPrompt(places) {
   const list = places
-    .map((p) =>
-      `- ${p.name} | ${p.cuisine || "food"} | ${p.tier || "unknown"} | ` +
-      `${p.minutes ?? "?"} min to food in hand | price ${p.price || "?"} | ` +
-      `rating ${p.rating ?? "?"} | ${p.distance || "?"} away`,
-    )
+    .map((p) => {
+      const rating = p.rating == null ? "no rating" : `${p.rating}${p.ratingCount ? ` (${p.ratingCount})` : ""}`;
+      const open = p.open === true ? "open" : p.open === false ? "CLOSED" : "hours unknown";
+      return `- ${p.name} | ${p.cuisine || "food"} | ${p.types.join(", ") || "-"} | ${p.tier || "unknown"} | ` +
+        `${p.minutes ?? "?"} min | ${p.price || "price ?"} | ${rating} | ${p.distance || "?"} | ${open}` +
+        (p.summary ? ` | "${p.summary}"` : "");
+    })
     .join("\n");
 
   return [
-    "You are Foodie, the assistant inside Warmer, a map that shows good, fast food nearby as a heat field.",
-    "The user is hungry and on foot. Minutes means total time until food is in their hand (prep + walk).",
-    "Tiers: perfect and good are warm; average is neutral; coldspot means 30+ minutes or closed and is shown in blue.",
+    "You are Foodie, the assistant inside Warmer: a map that shows good, fast food near a hungry person on foot.",
+    "Turn what they say into (a) filters the map will apply and (b) a short, honest recommendation.",
     "",
-    "Answer ONLY with a single JSON object, no markdown fences, no prose outside the JSON:",
-    "{",
-    '  "cuisines": ["mexican"],',
-    '  "weights": { "selection": 0.1, "rating": 0.2, "fast": 0.5, "cheap": 0.2 },',
-    '  "reply": "one short paragraph"',
-    "}",
+    "Each place: name | primary type | google type tags | tier | minutes to food in hand (prep + walk) | price ($ cheap … $$$$) | rating (count) | walking distance | open/CLOSED | one-line description.",
+    "Tiers: perfect and good are warm; average is neutral; coldspot means 30+ minutes or closed.",
     "",
-    "Rules:",
-    "- cuisines: lowercase cuisine or food-type words the user asked for (e.g. pizza, sushi, coffee, mexican). [] if none.",
-    "- weights: how much the user cares about each of selection, rating, fast, cheap, values 0..1 summing to about 1. null if they expressed no preference.",
-    "- reply: one short paragraph naming the real top 3 places for this request, each with minutes, price, rating and distance taken from the list. Plain text, no lists, no markdown.",
-    "- If the user asks what to avoid, name the coldspot places and say why (long wait or closed).",
-    "- You may only name places that appear in the list below. Never invent a place, a rating or a time.",
-    "- If nothing in the list fits, say so briefly and suggest the closest alternatives from the list.",
+    "How to think:",
+    "1. Translate vague wants into concrete cuisines or types THAT ACTUALLY APPEAR in the type tags or descriptions below.",
+    "   spicy → mexican, korean, indian, thai, sichuan, ethiopian, middle eastern (shakshuka, sabich, hot sauce).",
+    "   healthy → salad, vegan, vegetarian, juice, mediterranean.  sweet/dessert → bakery, pastry, ice cream, dessert.",
+    "   coffee → coffee_shop, cafe.  quick bite → meal_takeaway, sandwich, bakery, fast food.",
+    "   A burger joint or a coffee shop is NOT a spicy option. Never pad the answer with places that don't fit the want.",
+    "2. Extract hard constraints: a time limit (\"within 10 minutes\" → max_minutes 10), a budget (\"cheap\" → max_price 2, \"really cheap\" → 1). Otherwise null.",
+    "3. Rank the places that fit by how well they match the want, then by minutes. Prefer open places. Ignore coldspots unless asked what to avoid.",
+    "4. If nothing fits the constraints, say so in one plain sentence and name the closest real alternatives with their ACTUAL minutes (e.g. \"nothing spicy under 10 min; the nearest is Kimchi's at 14\"). Never pretend a place fits.",
+    "",
+    "Output fields:",
+    "- cuisines: lowercase tokens that match type tags or primary types present in the list, e.g. \"korean\", \"mexican\", \"bakery\", \"coffee\". [] when the request is not about a cuisine or type.",
+    "- weights: how much they care about selection / rating / fast / cheap, each 0..1 summing to about 1; null if no preference was expressed.",
+    "- max_minutes: integer or null.  max_price: 1–4 or null.",
+    "- reply: plain text, at most 60 words, no lists, no markdown, no hedging asides. Name at most three real places from the list, each once, with minutes, price, rating and distance exactly as given. Lead with the best pick. For \"what should I avoid?\" name the coldspots and why. Only names from the list. Never invent a place, rating or time.",
     "",
     "Places near the user:",
     list || "(no places loaded yet)",
@@ -476,7 +515,11 @@ function normalizeFoodie(parsed) {
     ? parsed.reply.trim().slice(0, 900)
     : FALLBACK.reply;
 
-  return { cuisines, weights, reply };
+  const intOrNull = (value, lo, hi) => (Number.isInteger(value) && value >= lo && value <= hi ? value : null);
+  const max_minutes = intOrNull(parsed.max_minutes, 1, 180);
+  const max_price = intOrNull(parsed.max_price, 1, 4);
+
+  return { cuisines, weights, max_minutes, max_price, reply };
 }
 
 const WORKSPACES_URL = "https://api.anthropic.com/v1/organizations/workspaces?limit=20";
@@ -519,7 +562,9 @@ async function handleFoodie(req, res) {
 
   const payload = {
     model: FOODIE_MODEL,
-    max_tokens: 400,
+    max_tokens: 700,
+    thinking: { type: "disabled" }, // a mapping task; the schema does the heavy lifting
+    output_config: { format: { type: "json_schema", schema: FOODIE_SCHEMA } },
     system: buildSystemPrompt(places),
     // User text goes in its own turn — never templated into the system prompt.
     messages: [{ role: "user", content: text }],

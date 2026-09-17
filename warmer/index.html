@@ -64,7 +64,39 @@
     left: 12px; right: 12px;
     display: flex; flex-direction: column; gap: 10px;
   }
-  .brand { display: flex; align-items: baseline; gap: 10px; padding: 0 4px; }
+  .brand { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
+  .icon-btn {
+    position: relative; width: 38px; height: 38px; border-radius: 50%; flex: 0 0 auto;
+    display: grid; place-items: center; color: var(--ink-2);
+  }
+  .icon-btn svg { width: 20px; height: 20px; }
+  .icon-btn .heart { fill: none; stroke: currentColor; stroke-width: 2; transition: fill .15s, stroke .15s; }
+  .icon-btn.has { color: var(--hot); }
+  .icon-btn.has .heart { fill: var(--hot); stroke: var(--hot); }
+  .badge {
+    position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 9px; background: var(--ink); color: var(--paper); font-size: 11px; font-weight: 600;
+    display: grid; place-items: center; border: 2px solid var(--paper);
+  }
+  .badge[hidden] { display: none; }
+  .fav-toggle .heart { fill: none; stroke: var(--ink-2); stroke-width: 2; width: 18px; height: 18px; }
+  .fav-toggle.on { background: rgba(224, 86, 42, 0.12); }
+  .fav-toggle.on .heart { fill: var(--hot); stroke: var(--hot); }
+  .fav-toggle:active { transform: scale(0.92); }
+  .head-actions { display: flex; gap: 8px; align-items: center; }
+  .favs h2 { margin: 10px 0 2px; font-size: 22px; letter-spacing: -0.02em; }
+  .favs .lede { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); }
+  .fav-list { display: grid; gap: 8px; }
+  .fav-row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 14px; border-radius: 14px;
+    background: var(--paper-2); border: 1px solid var(--line); text-align: left;
+  }
+  .fav-row .fav-main { flex: 1; min-width: 0; text-align: left; }
+  .fav-row .fav-name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; }
+  .fav-row .fav-meta { font-size: 12px; color: var(--ink-2); margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+  .fav-row .fav-meta .dot { width: 8px; height: 8px; }
+  .fav-remove { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); font-size: 18px; background: var(--paper); }
+  .fav-empty { font-size: 14px; color: var(--ink-2); padding: 18px 4px 6px; text-align: center; }
   .brand-name {
     font-size: 24px; font-weight: 700; letter-spacing: -0.02em; line-height: 1;
     text-shadow: 0 1px 0 rgba(245, 240, 232, 0.9), 0 0 14px rgba(245, 240, 232, 0.9);
@@ -283,6 +315,7 @@
     <span class="brand-name">Warmer</span>
     <span class="brand-sub" id="status">finding you…</span>
     <button class="filter-chip" id="filterChip" type="button"><span id="filterText"></span><b>×</b></button>
+    <button class="icon-btn glass" id="favBtn" type="button" aria-label="Favorites"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="heart" d="M12 20.5s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.8a4.3 4.3 0 0 1 7.5 2.7c0 5.4-7.5 10-7.5 10z"/></svg><span class="badge num" id="favCount" hidden>0</span></button>
   </div>
   <nav class="tabs glass" id="tabs" aria-label="Weighting">
     <button type="button" data-mode="selection">Big selection</button>
@@ -311,7 +344,10 @@
   <div class="sheet-head">
     <span class="tier" id="cTier" data-tier="average">Average</span>
     <span class="heat-score">heat <b class="num" id="cHeat">0.00</b></span>
-    <button class="close" id="cClose" type="button" aria-label="Close">×</button>
+    <div class="head-actions">
+      <button class="close fav-toggle" id="cFav" type="button" aria-label="Save to favorites"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="heart" d="M12 20.5s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.8a4.3 4.3 0 0 1 7.5 2.7c0 5.4-7.5 10-7.5 10z"/></svg></button>
+      <button class="close" id="cClose" type="button" aria-label="Close">×</button>
+    </div>
   </div>
   <h2 id="cName">—</h2>
   <p class="sub"><span id="cCuisine">—</span><span id="cOpen"></span></p>
@@ -344,6 +380,16 @@
     <button type="submit" id="askBtn" aria-label="Ask">↑</button>
   </form>
   <div class="reply" id="reply"><div id="replyText"></div><div class="applied" id="replyApplied"></div></div>
+</section>
+
+<section class="sheet favs" id="favs" aria-label="Favorites">
+  <div class="handle"></div>
+  <div class="sheet-head">
+    <h2>Favorites</h2>
+    <button class="close" id="favsClose" type="button" aria-label="Close">×</button>
+  </div>
+  <p class="lede">Saved on this phone. Tap one to jump to it.</p>
+  <div class="fav-list" id="favList"></div>
 </section>
 
 <div class="toast" id="toast" role="status"></div>
@@ -410,6 +456,9 @@
     mode: "fast",
     customWeights: null,
     cuisines: [],
+    maxMinutes: null,
+    maxPrice: null,
+    favorites: new Map(),
     lastFetch: null,
     fetching: false,
     selectedId: null,
@@ -648,13 +697,22 @@
     const peak = isPeakHour();
     const scored = state.places.map((p) => scorePlace(p, w, peak));
 
-    if (state.cuisines.length) {
-      const hits = scored.filter((s) => matchesCuisine(s.place, state.cuisines));
-      if (hits.length) {
-        for (const s of scored) s.filtered = !matchesCuisine(s.place, state.cuisines);
+    if (hasFilter()) {
+      const fits = (s) =>
+        (!state.cuisines.length || matchesCuisine(s.place, state.cuisines)) &&
+        (!state.maxMinutes || s.minutes <= state.maxMinutes) &&
+        (!state.maxPrice || s.place.priceLevel === null || s.place.priceLevel <= state.maxPrice);
+      // Relax one constraint at a time — time, then price, then cuisine — so a
+      // "spicy within 10 min" that has no exact match still lights up the spicy places.
+      const dropped = [];
+      if (!scored.some(fits) && state.maxMinutes) { dropped.push(`≤${state.maxMinutes} min`); state.maxMinutes = null; }
+      if (!scored.some(fits) && state.maxPrice) { dropped.push(`≤${"$".repeat(state.maxPrice)}`); state.maxPrice = null; }
+      if (!scored.some(fits) && state.cuisines.length) { dropped.push(describeFilter(true)); state.cuisines = []; }
+      if (hasFilter()) {
+        for (const s of scored) s.filtered = !fits(s);
+        if (dropped.length) toast(`Nothing ${dropped.join(" ")} — showing the closest matches instead`);
       } else {
-        toast(`No ${state.cuisines.join(" / ")} within ${SEARCH_RADIUS_M} m — showing everything`);
-        state.cuisines = [];
+        toast(`Nothing matches ${dropped.join(" ")} nearby — showing everything`);
       }
     }
 
@@ -682,8 +740,8 @@
         radius: s.filtered ? 4 : s.tier === "cold" ? 6 : 7,
         fillColor: s.filtered ? COLORS.average : COLORS[s.tier],
         fillOpacity: s.filtered ? 0.35 : 1,
-        color: "#F5F0E8",
-        weight: s.filtered ? 1 : 2,
+        color: isFavorite(s.id) ? "#141413" : "#F5F0E8",
+        weight: s.filtered ? 1 : isFavorite(s.id) ? 2.5 : 2,
         opacity: s.filtered ? 0.4 : 1,
         bubblingMouseEvents: false, // otherwise the map's click handler closes the card we just opened
       });
@@ -717,10 +775,25 @@
     });
   }
 
+  function hasFilter() { return state.cuisines.length > 0 || state.maxMinutes !== null || state.maxPrice !== null; }
+  function describeFilter(short = false) {
+    const parts = short && state.cuisines.length > 2
+      ? [...state.cuisines.slice(0, 2), `+${state.cuisines.length - 2}`]
+      : [...state.cuisines];
+    if (state.maxMinutes) parts.push(`≤${state.maxMinutes} min`);
+    if (state.maxPrice) parts.push(`≤${"$".repeat(state.maxPrice)}`);
+    return parts.join(" · ");
+  }
+  function clearFilter(redraw = true) {
+    state.cuisines = [];
+    state.maxMinutes = null;
+    state.maxPrice = null;
+    if (redraw) rescore();
+  }
   function renderFilterChip() {
     const chip = $("filterChip");
-    if (state.cuisines.length) {
-      $("filterText").textContent = state.cuisines.join(", ");
+    if (hasFilter()) {
+      $("filterText").textContent = describeFilter(true);
       chip.classList.add("on");
     } else {
       chip.classList.remove("on");
@@ -746,13 +819,97 @@
   const fmtPrice = (level) => (level === null ? "—" : level === 0 ? "free" : "$".repeat(level));
 
   // ---------------------------------------------------------------------
+  // Favorites — kept in this browser only
+  // ---------------------------------------------------------------------
+
+  const FAV_KEY = "warmer.favorites";
+
+  function loadFavorites() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(FAV_KEY) || "{}");
+      state.favorites = new Map(Object.entries(raw).filter(([, p]) => p && typeof p.id === "string"));
+    } catch {
+      state.favorites = new Map();
+    }
+  }
+  function saveFavorites() {
+    try { localStorage.setItem(FAV_KEY, JSON.stringify(Object.fromEntries(state.favorites))); } catch { /* private mode etc. */ }
+  }
+  const isFavorite = (id) => state.favorites.has(id);
+
+  function toggleFavorite(place) {
+    if (isFavorite(place.id)) state.favorites.delete(place.id);
+    else state.favorites.set(place.id, place);
+    saveFavorites();
+    renderFavBadge();
+    if (currentCard && currentCard.id === place.id) $("cFav").classList.toggle("on", isFavorite(place.id));
+    drawMarkers();
+  }
+
+  function renderFavBadge() {
+    const n = state.favorites.size;
+    $("favCount").hidden = n === 0;
+    $("favCount").textContent = String(n);
+    $("favBtn").classList.toggle("has", n > 0);
+  }
+
+  // A favorite may be outside the current fetch; score it on the fly so the card still has numbers.
+  function scoredFor(place) {
+    return state.scored.find((s) => s.id === place.id) || scorePlace(place, activeWeights(), isPeakHour());
+  }
+
+  function renderFavList() {
+    const list = $("favList");
+    list.textContent = "";
+    if (!state.favorites.size) {
+      const empty = document.createElement("p");
+      empty.className = "fav-empty";
+      empty.textContent = "Nothing saved yet. Tap the heart on any place.";
+      list.appendChild(empty);
+      return;
+    }
+    const rows = [...state.favorites.values()].map(scoredFor).sort((a, b) => a.minutes - b.minutes);
+    for (const s of rows) {
+      const row = document.createElement("div");
+      row.className = "fav-row";
+      const main = document.createElement("button"); main.type = "button"; main.className = "fav-main";
+      const name = document.createElement("div"); name.className = "fav-name"; name.textContent = s.place.name;
+      const meta = document.createElement("div"); meta.className = "fav-meta";
+      const dot = document.createElement("span"); dot.className = "dot"; dot.style.background = COLORS[s.tier];
+      const txt = document.createElement("span");
+      txt.textContent = `${s.cuisine} · ${Math.round(s.minutes)} min · ${fmtDistance(s.walkM)}`;
+      meta.append(dot, txt);
+      main.append(name, meta);
+      main.addEventListener("click", () => { closeFavs(); openCard(s, true); });
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "fav-remove";
+      remove.setAttribute("aria-label", "Remove"); remove.textContent = "×";
+      remove.addEventListener("click", () => { toggleFavorite(s.place); renderFavList(); });
+      row.append(main, remove);
+      list.appendChild(row);
+    }
+  }
+
+  function openFavs() {
+    closeCard();
+    closeFoodie();
+    renderFavList();
+    $("favs").classList.add("open");
+  }
+  function closeFavs() { $("favs").classList.remove("open"); }
+
+  // ---------------------------------------------------------------------
   // Card
   // ---------------------------------------------------------------------
+
+  let currentCard = null;
 
   function openCard(s, pan) {
     const p = s.place;
     state.selectedId = s.id;
+    currentCard = s;
     closeFoodie();
+    closeFavs();
+    $("cFav").classList.toggle("on", isFavorite(p.id));
 
     const tierEl = $("cTier");
     tierEl.dataset.tier = s.tier;
@@ -814,6 +971,7 @@
   function closeCard() {
     $("card").classList.remove("open");
     state.selectedId = null;
+    currentCard = null;
     renderRank();
   }
 
@@ -832,6 +990,7 @@
 
   function openFoodie() {
     closeCard();
+    closeFavs();
     $("foodie").classList.add("open");
   }
   function closeFoodie() { $("foodie").classList.remove("open"); }
@@ -840,11 +999,15 @@
     return state.scored.map((s) => ({
       name: s.place.name,
       cuisine: s.cuisine,
+      types: s.place.types.filter((t) => !GENERIC_TYPES.has(t)).slice(0, 6),
       tier: s.tier === "cold" ? "coldspot" : s.tier,
       minutes: Math.round(s.minutes),
       price: fmtPrice(s.place.priceLevel),
       rating: s.place.rating,
+      ratingCount: s.place.userRatingCount || null,
       distance: fmtDistance(s.walkM),
+      open: s.place.openNow,
+      summary: s.place.editorialSummary ? s.place.editorialSummary.slice(0, 120) : "",
     }));
   }
 
@@ -885,11 +1048,13 @@
         setActiveTab(null);
       }
       state.cuisines = Array.isArray(data.cuisines) ? data.cuisines : [];
+      state.maxMinutes = Number.isInteger(data.max_minutes) ? data.max_minutes : null;
+      state.maxPrice = Number.isInteger(data.max_price) ? data.max_price : null;
       rescore();
 
       replyText.textContent = data.reply;
       const bits = [];
-      if (state.cuisines.length) bits.push(`filter: ${state.cuisines.join(", ")}`);
+      if (hasFilter()) bits.push(`filter: ${describeFilter()}`);
       if (data.weights) {
         const w = data.weights;
         const top = Object.entries(w).sort((a, b) => b[1] - a[1]).slice(0, 2)
@@ -970,10 +1135,13 @@
     rescore();
   });
 
-  $("filterChip").addEventListener("click", () => { state.cuisines = []; rescore(); });
+  $("filterChip").addEventListener("click", () => clearFilter());
   $("warmBtn").addEventListener("click", warmMeNow);
   $("foodieBtn").addEventListener("click", openFoodie);
   $("cClose").addEventListener("click", closeCard);
+  $("cFav").addEventListener("click", () => { if (currentCard) toggleFavorite(currentCard.place); });
+  $("favBtn").addEventListener("click", () => ($("favs").classList.contains("open") ? closeFavs() : openFavs()));
+  $("favsClose").addEventListener("click", closeFavs);
   $("fClose").addEventListener("click", closeFoodie);
 
   $("quick").addEventListener("click", (e) => {
@@ -987,7 +1155,7 @@
     askFoodie($("askInput").value);
   });
 
-  map.on("click", () => { closeCard(); closeFoodie(); });
+  map.on("click", () => { closeCard(); closeFoodie(); closeFavs(); });
   map.on("zoomend", drawMarkers);
   map.on("moveend", () => {
     if (map.getZoom() < 14 || state.fetching || !state.lastFetch) return;
@@ -998,6 +1166,8 @@
   // Re-run the peak-hour check as the clock moves.
   setInterval(() => { if (state.places.length) rescore(); }, 5 * 60 * 1000);
 
+  loadFavorites();
+  renderFavBadge();
   locate();
 })();
 </script>

@@ -78,4 +78,6 @@ to bill (Console → Settings → Workspaces → open one; pasting the page URL 
 
 Demo it in Chrome's device toolbar at 390×844. Denied/absent geolocation falls back to
 Rothschild Blvd, Tel Aviv. Keys stay on the server: the browser only ever talks to
-`/api/places` (Google Places New, cached 5 min) and `/api/foodie` (Claude Haiku 4.5).
+`/api/places` (Google Places New, cached 5 min) and `/api/foodie` (Claude Sonnet 5 with a
+JSON schema; it sees each place's type tags, hours and description, and returns cuisine,
+time and budget filters the map applies). Favorites live in the browser's localStorage.
